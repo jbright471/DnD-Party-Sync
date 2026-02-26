@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    image: node:20-alpine
+    container_name: dnd-party-sync-backend
+    working_dir: /app/server
+    # Install dependencies on startup and run nodemon
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3002:3001"
+    volumes:
+      - ./server:/app/server # Mount real-time backend code
+      - /app/server/node_modules # Anonymize node_modules
+      - ./data:/app/data # Persist SQLite database
+    environment:
+      - OLLAMA_URL=http://192.168.50.47:11434
+      - DB_PATH=/app/data/dnd.db
+      - NODE_ENV=development
+    restart: unless-stopped
+    networks:
+      - dnd-network
+
+  frontend:
+    image: node:20-alpine
+    container_name: dnd-party-sync-frontend
+    working_dir: /app/client
+    # Install dependencies and start Vite with live reload exposed
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app/client # Mount real-time frontend code
+      - /app/client/node_modules # Anonymize node_modules
+    environment:
+      # Optional: Vite watches this directory inside the container
+      - CHOKIDAR_USEPOLLING=true
+    restart: unless-stopped
+    networks:
+      - dnd-network
+
+networks:
+  dnd-network:
+    driver: bridge
