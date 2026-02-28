@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import socket from '../socket';
 
 // Common D&D Skill to Ability score mapping
 const SKILL_MAP = {
@@ -17,26 +18,26 @@ export default function CharacterSheetModal({ character, onClose }) {
     // Parse JSON fields defensively
     let stats = { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
     try {
-        const parsed = typeof character.stats === 'string' ? JSON.parse(character.stats) : character.stats;
-        if (parsed && typeof parsed === 'object') stats = { ...stats, ...parsed };
+        const parsedStats = typeof character.stats === 'string' ? JSON.parse(character.stats) : character.stats;
+        if (parsedStats && typeof parsedStats === 'object') stats = { ...stats, ...parsedStats };
     } catch { }
 
     let skills = [];
     try {
-        const parsed = typeof character.skills === 'string' ? JSON.parse(character.skills) : character.skills;
-        if (Array.isArray(parsed)) skills = parsed;
+        const parsedSkills = typeof character.skills === 'string' ? JSON.parse(character.skills) : character.skills;
+        if (Array.isArray(parsedSkills)) skills = parsedSkills;
     } catch { }
 
     let features = [];
     try {
-        const parsed = typeof character.features_traits === 'string' ? JSON.parse(character.features_traits) : character.features_traits;
-        if (Array.isArray(parsed)) features = parsed;
+        const parsedFeatures = typeof character.features_traits === 'string' ? JSON.parse(character.features_traits) : character.features_traits;
+        if (Array.isArray(parsedFeatures)) features = parsedFeatures;
     } catch { }
 
     let inventory = [];
     try {
-        const parsed = typeof character.inventory === 'string' ? JSON.parse(character.inventory) : character.inventory;
-        if (Array.isArray(parsed)) inventory = parsed;
+        const parsedInventory = typeof character.inventory === 'string' ? JSON.parse(character.inventory) : character.inventory;
+        if (Array.isArray(parsedInventory)) inventory = parsedInventory;
     } catch { }
 
     // Calculate modifier
@@ -53,6 +54,13 @@ export default function CharacterSheetModal({ character, onClose }) {
         return total >= 0 ? `+${total}` : `${total}`;
     };
 
+    const decodeHTML = (html) => {
+        if (!html) return '';
+        const txt = document.createElement("textarea");
+        txt.innerHTML = html;
+        return txt.value;
+    };
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-content" style={{ width: '900px', maxWidth: '95vw', height: '80vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
@@ -61,7 +69,7 @@ export default function CharacterSheetModal({ character, onClose }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--dnd-border)', paddingBottom: '1rem', marginBottom: '1rem' }}>
                     <div>
                         <h2 className="fantasy-heading" style={{ margin: 0, fontSize: '2rem', color: 'var(--dnd-gold)' }}>
-                            {character.name}
+                            {decodeHTML(character.name)}
                         </h2>
                         <div style={{ color: 'var(--dnd-muted)', display: 'flex', gap: '1rem', marginTop: '0.25rem' }}>
                             <span>Level {character.level} {character.class}</span>
@@ -69,11 +77,30 @@ export default function CharacterSheetModal({ character, onClose }) {
                             <span>HP: <strong style={{ color: 'var(--dnd-text)' }}>{character.current_hp} / {character.max_hp}</strong></span>
                         </div>
                     </div>
-                    <button className="btn-ghost" onClick={onClose} style={{ fontSize: '1.5rem', padding: '0.2rem 0.5rem' }}>×</button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <button
+                            className="btn-primary"
+                            style={{ backgroundColor: 'var(--dnd-red)', borderColor: 'var(--dnd-red)', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                            onClick={async () => {
+                                if (window.confirm('Are you sure you want to remove this character?')) {
+                                    try {
+                                        await fetch(`/api/characters/${character.id}`, { method: 'DELETE' });
+                                        socket.emit('refresh_party');
+                                        onClose();
+                                    } catch (err) {
+                                        console.error('Failed to delete character:', err);
+                                    }
+                                }
+                            }}
+                        >
+                            🗑️ Remove
+                        </button>
+                        <button className="btn-ghost" onClick={onClose} style={{ fontSize: '1.5rem', padding: '0.2rem 0.5rem' }}>×</button>
+                    </div>
                 </div>
 
                 {/* Tabs */}
-                <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--dnd-border)', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', borderBottom: '1px solid var(--dnd-border)', marginBottom: '1rem' }}>
                     {['Combat & Stats', 'Inventory & Equipment', 'Features & Traits', 'Lore & Notes'].map(tab => (
                         <button
                             key={tab}
@@ -81,7 +108,9 @@ export default function CharacterSheetModal({ character, onClose }) {
                             style={{
                                 padding: '0.5rem 1rem',
                                 borderBottom: activeTab === tab ? '2px solid var(--dnd-gold)' : '2px solid transparent',
-                                textTransform: 'capitalize'
+                                textTransform: 'capitalize',
+                                whiteSpace: 'nowrap',
+                                flexGrow: 1
                             }}
                             onClick={() => setActiveTab(tab)}
                         >

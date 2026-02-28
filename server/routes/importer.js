@@ -1,7 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const fetch = require('node-fetch');
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const db = require('../db');
+const { parseCharacterPdfLLM } = require('../ollama');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 /**
  * POST /api/characters/import
@@ -175,8 +183,115 @@ router.post('/', async (req, res) => {
     });
 });
 
+/**
+ * POST /api/characters/import-raw
+ * Body: { rawJson: "..." }
+ */
+router.post('/import-raw', (req, res) => {
+    const { rawJson } = req.body;
+    if (!rawJson || typeof rawJson !== 'string') {
+        return res.status(400).json({ error: 'A valid rawJson payload is required.' });
+    }
 
-// ── Helper: deeply search __NEXT_DATA__ for character payload ─────────
+    let parsed;
+    try {
+        parsed = JSON.parse(rawJson);
+    } catch (err) {
+        return res.status(400).json({ error: 'Invalid JSON' });
+    }
+
+    try {
+        const charData = parsed.data || parsed.character || parsed;
+        const character = parseCharacterData(charData);
+        const newChar = insertCharacter(character);
+        return res.status(201).json(newChar);
+    } catch (err) {
+        console.error('[Importer] Raw JSON parse failed:', err);
+        return res.status(500).json({ error: 'Failed to parse character data from the provided JSON.' });
+    }
+});
+
+/**
+ * POST /api/characters/import/pdf
+ * Handles a multipart/form-data upload with a 'pdf' file.
+ * Pivot Upgrade: Uses advanced 11-rule parser and SessionState initialization.
+ */
+const { createInitialSessionState } = require('../lib/models');
+
+router.post('/pdf', upload.single('pdf'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No PDF file uploaded.' });
+    }
+
+    try {
+        console.log(`[Importer] Beginning PDF parse on uploaded file size: ${req.file.size} bytes`);
+
+        // Pivot: use pdftotext -layout for D&D Beyond form support
+        const tempPath = path.join(__dirname, `../../tmp/import_${Date.now()}.pdf`);
+        if (!fs.existsSync(path.join(__dirname, '../../tmp'))) {
+            fs.mkdirSync(path.join(__dirname, '../../tmp'), { recursive: true });
+        }
+        fs.writeFileSync(tempPath, req.file.buffer);
+
+        let rawText;
+        try {
+            rawText = execSync(`pdftotext -layout "${tempPath}" -`).toString();
+        } catch (execErr) {
+            console.warn('[Importer] pdftotext failed, falling back to pdf-parse');
+            const pdfData = await pdfParse(req.file.buffer);
+            rawText = pdfData.text;
+        } finally {
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        }
+
+        console.log(`[Importer] Dispatching to Advanced LLM Parser...`);
+        const parsed = await parseCharacterPdfLLM(rawText);
+
+        if (!parsed || !parsed.name || !parsed.classes) {
+            throw new Error('LLM failed to return a valid structured representation of the character.');
+        }
+
+        // Format for DB insertion
+        const charClass = parsed.classes.map(c => `${c.name} ${c.level}`).join(' / ');
+        const totalLevel = parsed.classes.reduce((sum, c) => sum + c.level, 0);
+
+        const character = {
+            name: parsed.name,
+            class: charClass,
+            level: totalLevel,
+            max_hp: parsed.baseMaxHp,
+            current_hp: parsed.baseMaxHp,
+            ac: parsed.baseAc,
+            stats: JSON.stringify(parsed.abilityScores),
+            skills: JSON.stringify(parsed.skills),
+            inventory: JSON.stringify(parsed.inventory),
+            features: JSON.stringify(parsed.features),
+            features_traits: JSON.stringify(parsed.features),
+            spells: JSON.stringify(parsed.spells),
+            backstory: '',
+            raw_dndbeyond_json: rawText,
+            data_json: JSON.stringify(parsed) // The "Master" JSON from pivot
+        };
+
+        const newChar = insertCharacter(character);
+
+        // Initialize Session State
+        const sessionState = createInitialSessionState(parsed, "manual-session-" + Date.now());
+        insertSessionState(newChar.id, sessionState);
+
+        return res.status(201).json({
+            success: true,
+            character: newChar,
+            validation: parsed.validation
+        });
+
+    } catch (err) {
+        console.error('[Importer] PDF to LLM extraction failed:', err);
+        return res.status(500).json({ error: err.message || 'Failed to process the PDF through the AI extractor.' });
+    }
+});
+
+// ── Shared browser-like headers ──────────────────────────────────
 function findCharacterInNextData(nextData) {
     // Common paths where character data lives in Next.js page props
     const paths = [
@@ -203,7 +318,6 @@ function deepFind(obj, predicate, depth = 0) {
     }
     return null;
 }
-
 
 // ── Helper: 5-step calculation for Ability Scores (DDB Rules) ──────────
 function calculateAbilityScore(statId, statName, data) {
@@ -252,7 +366,7 @@ function calculateAbilityScore(statId, statName, data) {
 
 // ── Helper: parse structured charData from the API / embedded JSON ────
 function parseCharacterData(data) {
-    const name = data.name || data.characterName || 'Unknown Adventurer';
+    const name = decodeHtml(data.name || data.characterName || 'Unknown Adventurer');
 
     // Class: take the first class or join multi-class
     let charClass = 'Adventurer';
@@ -317,7 +431,9 @@ function parseCharacterData(data) {
         name: i.definition.name,
         quantity: i.quantity,
         equipped: i.equipped,
-        type: i.definition.filterType
+        type: i.definition.filterType,
+        weight: i.definition.weight,
+        isAttuned: i.isAttuned
     })) : [];
 
     const spellsObj = data.classSpells || {};
@@ -328,6 +444,7 @@ function parseCharacterData(data) {
         name, charClass, level, maxHp, currentHp, ac,
         stats: JSON.stringify(statsObj),
         skills: JSON.stringify(parsedSkills),
+        features: JSON.stringify(featuresArr),
         features_traits: JSON.stringify(featuresArr),
         inventory: JSON.stringify(inventoryArr),
         spells: JSON.stringify(spellsObj),
@@ -336,6 +453,16 @@ function parseCharacterData(data) {
     };
 }
 
+// ── Helper: simple HTML entity decoder ────────────────────────────────
+function decodeHtml(str) {
+    if (!str) return str;
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+}
 
 // ── Helper: try to extract basic stats from raw HTML elements ─────────
 function parseCharacterFromHTML(html) {
@@ -345,7 +472,10 @@ function parseCharacterFromHTML(html) {
         || html.match(/<span[^>]*class="[^"]*ddbc-character-name[^"]*"[^>]*>([^<]+)</);
     if (!nameMatch) return null;
 
-    const name = nameMatch[1].trim();
+    const name = decodeHtml(nameMatch[1].trim());
+    if (name === "D&D Beyond Character Sheet") {
+        throw new Error("Blocked by D&D Beyond Cloudflare protection");
+    }
 
     // Try to find class/level from meta description or page text
     const descMatch = html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"/);
@@ -380,7 +510,6 @@ function parseCharacterFromHTML(html) {
     return { name, charClass, level, maxHp, currentHp, ac };
 }
 
-
 // ── Helper: attempt JSON.parse on a string, finding the matching } ────
 function tryParseJSON(str) {
     let depth = 0;
@@ -397,26 +526,53 @@ function tryParseJSON(str) {
     return null;
 }
 
+function insertSessionState(characterId, state) {
+    const stmt = db.prepare(`
+        INSERT OR REPLACE INTO session_states (
+            character_id, session_id, current_hp, temp_hp, 
+            death_saves_json, conditions_json, buffs_json, 
+            concentrating_on, slots_used_json, hd_used_json, 
+            feature_uses_json, active_features_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+        characterId,
+        state.sessionId,
+        state.currentHp,
+        state.tempHp,
+        JSON.stringify(state.deathSaves),
+        JSON.stringify(state.activeConditions),
+        JSON.stringify(state.activeBuffs),
+        state.concentratingOn,
+        JSON.stringify(state.spellSlotsUsed),
+        JSON.stringify(state.hitDiceUsed),
+        JSON.stringify(state.featureUses),
+        JSON.stringify(state.activeFeatures)
+    );
+}
 
 // ── Helper: insert into SQLite and return the new row ─────────────────
 function insertCharacter(charObj) {
     const {
-        name, charClass, level, maxHp, currentHp, ac,
-        stats = '{}', skills = '{}', features_traits = '[]', inventory = '[]', spells = '{}', backstory = '', raw_dndbeyond_json = ''
+        name, class: charClass, level, max_hp, current_hp, ac,
+        stats = '{}', skills = '{}', features = '[]', features_traits = '[]',
+        inventory = '[]', spells = '{}', backstory = '',
+        raw_dndbeyond_json = '', data_json = '{}'
     } = charObj;
 
     const stmt = db.prepare(`
         INSERT INTO characters (
             name, class, level, max_hp, current_hp, ac,
-            stats, skills, features, features_traits, inventory, spells, backstory, raw_dndbeyond_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            stats, skills, features, features_traits, inventory, spells, backstory, 
+            raw_dndbeyond_json, data_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
-        name, charClass, level, maxHp, currentHp || maxHp, ac,
-        stats, skills, '[]', features_traits, inventory, spells, backstory, raw_dndbeyond_json
+        name, charClass, level, max_hp, current_hp || max_hp, ac,
+        stats, skills, features, features_traits, inventory, spells, backstory,
+        raw_dndbeyond_json, data_json
     );
     return db.prepare('SELECT * FROM characters WHERE id = ?').get(result.lastInsertRowid);
 }
-
 
 module.exports = router;

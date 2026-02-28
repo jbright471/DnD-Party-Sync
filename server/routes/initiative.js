@@ -120,7 +120,18 @@ function resortTracker() {
 }
 
 function getTrackerState() {
-    return db.prepare('SELECT * FROM initiative_tracker ORDER BY sort_order ASC').all();
+    const tracker = db.prepare('SELECT * FROM initiative_tracker ORDER BY sort_order ASC').all();
+    return tracker.map(entity => {
+        if (!entity.character_id) return { ...entity, conditions: [], concentrating_on: null };
+        const session = db.prepare(
+            'SELECT conditions_json, concentrating_on FROM session_states WHERE character_id = ?'
+        ).get(entity.character_id);
+        return {
+            ...entity,
+            conditions: JSON.parse(session?.conditions_json ?? '[]'),
+            concentrating_on: session?.concentrating_on ?? null,
+        };
+    });
 }
 
 function advanceTurn() {

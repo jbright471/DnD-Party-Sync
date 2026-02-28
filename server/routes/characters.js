@@ -59,4 +59,15 @@ router.get('/log', (req, res) => {
     }
 });
 
+// DELETE /api/characters/:id
+router.delete('/:id', (req, res) => {
+    try {
+        db.prepare('DELETE FROM characters WHERE id = ?').run(req.params.id);
+        db.prepare('DELETE FROM initiative_tracker WHERE character_id = ?').run(req.params.id);
+        res.status(200).json({ message: 'Character deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = { router, getAllCharacters };

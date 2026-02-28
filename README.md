@@ -6,19 +6,22 @@ A containerized, real-time companion application for managing D&D campaigns, com
 
 ## Architecture
 
-**Frontend:** React (Vite) + Tailwind CSS + Socket.io-client
+**Frontend:** React (Vite) + Vanilla CSS + Socket.io-client
 **Backend:** Node.js + Express + Socket.io
-**Database:** SQLite (`better-sqlite3`)
+**Logic:** 5e Rules Engine (`rulesEngine.js`) for automated math & validation
+**Database:** SQLite (`better-sqlite3`) with persistent Session States
 **Deployment:** Docker + Portainer + Cloudflare Tunnels
-**AI Integration:** Local Ollama API (Llama3 / Mistral) via backend API
+**AI Integration:** Local Ollama API (Gemma/Llama) for narrative recaps and action resolution
 
 ## Features
 
-- **Party Dashboard:** Real-time synchronization of character HP, AC, Spells, and Conditions.
-- **Deep Integrations (D&D Beyond):** Robust, multi-strategy scraping and API parsing to import full character datasets, auto-calculating ability score modifiers based on 5E rules.
-- **Initiative Tracker:** Live combat ordering with DM controls to advance turns.
-- **Session Recaps:** Local AI-generated narrative summaries based on logged session actions.
-- **Real-Time Data Sync:** Socket.io ensures no player has to refresh their browser during a session.
+- **Automated 5e Rules Engine:** Real-time calculation of HP, AC, resistances, and concentration DCs.
+- **Advanced Party Dashboard:** Geometric UI with animated HP bars, color-shifting status, and spell slot tracking.
+- **PDF-to-Layout Importer:** High-fidelity character extraction using `pdftotext -layout` and structured LLM parsing.
+- **Dynamic Initiative Tracker:** Combat ordering with integrated condition tokens and concentration indicators.
+- **Concentration Alert System:** Automatic detection and modal prompts for concentration checks on damage.
+- **Session Recaps:** Narrative summaries of your session's highlights using local AI.
+- **Real-Time Data Sync:** Zero-latency updates for the entire party via Socket.io.
 
 ## Setup & Deployment
 

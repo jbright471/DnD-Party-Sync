@@ -14,7 +14,7 @@ services:
       - /app/server/node_modules # Anonymize node_modules
       - ./data:/app/data # Persist SQLite database
     environment:
-      - OLLAMA_URL=http://192.168.50.47:11434
+      - OLLAMA_URL=http://192.168.50.209:11434
       - DB_PATH=/app/data/dnd.db
       - NODE_ENV=development
     restart: unless-stopped

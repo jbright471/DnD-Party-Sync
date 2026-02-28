@@ -10,21 +10,21 @@ import { useState, useEffect, useRef } from 'react';
 
 // ─── Condition metadata ──────────────────────────────────────────────────────
 const CONDITION_META = {
-  blinded: { icon: '◎', color: '#94a3b8', label: 'Blinded' },
-  charmed: { icon: '♥', color: '#f472b6', label: 'Charmed' },
-  deafened: { icon: '◌', color: '#94a3b8', label: 'Deafened' },
-  exhaustion: { icon: '↓', color: '#fb923c', label: 'Exhausted' },
-  frightened: { icon: '!', color: '#fbbf24', label: 'Frightened' },
-  grappled: { icon: '⊕', color: '#a78bfa', label: 'Grappled' },
+  blinded:       { icon: '◎', color: '#94a3b8', label: 'Blinded' },
+  charmed:       { icon: '♥', color: '#f472b6', label: 'Charmed' },
+  deafened:      { icon: '◌', color: '#94a3b8', label: 'Deafened' },
+  exhaustion:    { icon: '↓', color: '#fb923c', label: 'Exhausted' },
+  frightened:    { icon: '!', color: '#fbbf24', label: 'Frightened' },
+  grappled:      { icon: '⊕', color: '#a78bfa', label: 'Grappled' },
   incapacitated: { icon: '×', color: '#f87171', label: 'Incapacitated' },
-  invisible: { icon: '◇', color: '#c084fc', label: 'Invisible' },
-  paralyzed: { icon: '‖', color: '#60a5fa', label: 'Paralyzed' },
-  petrified: { icon: '◆', color: '#9ca3af', label: 'Petrified' },
-  poisoned: { icon: '✦', color: '#4ade80', label: 'Poisoned' },
-  prone: { icon: '↘', color: '#fb923c', label: 'Prone' },
-  restrained: { icon: '⊗', color: '#f97316', label: 'Restrained' },
-  stunned: { icon: '~', color: '#38bdf8', label: 'Stunned' },
-  unconscious: { icon: '●', color: '#f87171', label: 'Unconscious' },
+  invisible:     { icon: '◇', color: '#c084fc', label: 'Invisible' },
+  paralyzed:     { icon: '‖', color: '#60a5fa', label: 'Paralyzed' },
+  petrified:     { icon: '◆', color: '#9ca3af', label: 'Petrified' },
+  poisoned:      { icon: '✦', color: '#4ade80', label: 'Poisoned' },
+  prone:         { icon: '↘', color: '#fb923c', label: 'Prone' },
+  restrained:    { icon: '⊗', color: '#f97316', label: 'Restrained' },
+  stunned:       { icon: '~', color: '#38bdf8', label: 'Stunned' },
+  unconscious:   { icon: '●', color: '#f87171', label: 'Unconscious' },
 };
 
 function getConditionMeta(condition) {
@@ -37,14 +37,14 @@ function getConditionMeta(condition) {
 function getHpColor(pct) {
   if (pct > 0.6) return '#22c55e';   // green
   if (pct > 0.3) return '#f59e0b';   // amber
-  if (pct > 0) return '#ef4444';   // red
+  if (pct > 0)   return '#ef4444';   // red
   return '#7f1d1d';                   // near-black red (at 0)
 }
 
 // ─── Class abbreviations ─────────────────────────────────────────────────────
 function formatClasses(classes = []) {
   return classes
-    .map(c => `${(c.name || 'Unknown').slice(0, 3).toUpperCase()} ${c.level || 1}`)
+    .map(c => `${c.name.slice(0, 3).toUpperCase()} ${c.level}`)
     .join(' / ');
 }
 
@@ -78,7 +78,7 @@ function DeathSavePips({ successes = 0, failures = 0 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
       <div style={{ display: 'flex', gap: 3 }}>
-        {[0, 1, 2].map(i => (
+        {[0,1,2].map(i => (
           <div key={i} style={{
             width: 8, height: 8,
             borderRadius: '50%',
@@ -88,7 +88,7 @@ function DeathSavePips({ successes = 0, failures = 0 }) {
         ))}
       </div>
       <div style={{ display: 'flex', gap: 3 }}>
-        {[0, 1, 2].map(i => (
+        {[0,1,2].map(i => (
           <div key={i} style={{
             width: 8, height: 8,
             borderRadius: '50%',

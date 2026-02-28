@@ -1,7 +1,7 @@
 import React from 'react';
 import CharacterCard from './CharacterCard';
 
-export default function PartyDashboard({ party, onAddClick }) {
+export default function PartyDashboard({ party, onAddClick, prevHpMap }) {
     return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             {/* Header */}
@@ -43,7 +43,11 @@ export default function PartyDashboard({ party, onAddClick }) {
                     paddingRight: '0.25rem',
                 }}>
                     {party.map(char => (
-                        <CharacterCard key={char.id} character={char} />
+                        <CharacterCard
+                            key={char.id}
+                            character={char}
+                            prevHp={prevHpMap?.[char.id] ?? char.currentHp}
+                        />
                     ))}
                 </div>
             )}

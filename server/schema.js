@@ -48,6 +48,7 @@ function runMigrations() {
   addColumnSafe('characters', 'spells', "TEXT DEFAULT '{}'");
   addColumnSafe('characters', 'backstory', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'raw_dndbeyond_json', "TEXT DEFAULT ''");
+  addColumnSafe('characters', 'data_json', "TEXT DEFAULT '{}'"); // New Pivot Column
 
   addColumnSafe('action_log', 'status', "TEXT DEFAULT 'applied'");
   addColumnSafe('action_log', 'effects_json', "TEXT DEFAULT NULL");
@@ -117,6 +118,26 @@ function runMigrations() {
       description  TEXT NOT NULL DEFAULT '',
       stats_json   TEXT NOT NULL DEFAULT '{}',
       created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // Pivot: Volatile session state
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_states (
+      character_id      INTEGER PRIMARY KEY,
+      session_id        TEXT,
+      current_hp        INTEGER,
+      temp_hp           INTEGER DEFAULT 0,
+      death_saves_json  TEXT DEFAULT '{"successes":0,"failures":0}',
+      conditions_json   TEXT DEFAULT '[]',
+      buffs_json        TEXT DEFAULT '[]',
+      concentrating_on  TEXT DEFAULT NULL,
+      slots_used_json   TEXT DEFAULT '{}',
+      hd_used_json      TEXT DEFAULT '{}',
+      feature_uses_json TEXT DEFAULT '{}',
+      active_features_json TEXT DEFAULT '[]',
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
     );
   `);
 

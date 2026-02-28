@@ -13,6 +13,57 @@ const homebrewRouter = require('./routes/homebrew');
 const db = require('./db');
 const { askRulesAssistant, resolveActionLLM, generateSessionRecap } = require('./ollama');
 const { backupDatabase } = require('./backup');
+const cron = require('node-cron');
+
+const {
+    applyDamageEvent,
+    applyHealEvent,
+    setTempHpEvent,
+    castConcentrationSpellEvent,
+    dropConcentrationEvent,
+    applyConditionEvent,
+    removeConditionEvent,
+    useSpellSlotEvent,
+    shortRestEvent,
+    longRestEvent,
+    getResolvedCharacterState,
+    getSessionState,
+    saveSessionState
+} = require('./lib/rulesIntegration');
+
+function applyEffect(effect) {
+    if (effect.type === 'hp') {
+        if (effect.delta < 0) {
+            return applyDamageEvent(db, effect.characterId, Math.abs(effect.delta), effect.damageType || 'untyped');
+        } else {
+            return applyHealEvent(db, effect.characterId, effect.delta);
+        }
+    }
+    if (effect.type === 'character') {
+        const { updates, characterId } = effect;
+        if (updates.conditions) {
+            for (const cond of updates.conditions) {
+                applyConditionEvent(db, characterId, cond);
+            }
+        }
+        if (updates.concentration_spell !== undefined) {
+            if (updates.concentration_spell) {
+                castConcentrationSpellEvent(db, characterId, updates.concentration_spell);
+            } else {
+                dropConcentrationEvent(db, characterId);
+            }
+        }
+        if (updates.spell_slots) {
+            const state = getSessionState(db, characterId);
+            if (state) {
+                state.spellSlotsUsed = updates.spell_slots;
+                saveSessionState(db, state);
+            }
+        }
+        return { success: true, logMessage: 'Character updated via AI' };
+    }
+    return { success: false, error: 'Unknown effect type' };
+}
 
 // --- Bootstrap ---
 runMigrations();
@@ -69,7 +120,24 @@ const playerSocketMap = new Map();
 // --- Helpers ---
 function broadcastPartyState() {
     const characters = getAllCharacters();
-    io.emit('party_state', characters);
+    const resolved = characters.map(char => {
+        const resolvedState = getResolvedCharacterState(db, char.id);
+        if (resolvedState) return resolvedState;
+
+        // Fallback for characters without session state yet
+        return {
+            ...char,
+            currentHp: char.current_hp,
+            maxHp: char.max_hp,
+            tempHp: 0,
+            conditions: [],
+            concentratingOn: null,
+            spellSlotsUsed: {},
+            spellSlotsMax: JSON.parse(char.spell_slots || '{}'),
+            deathSaves: { successes: 0, failures: 0 }
+        };
+    });
+    io.emit('party_state', resolved);
 }
 
 function broadcastLogs() {
@@ -95,37 +163,7 @@ function logAction(actor, description, status = 'applied', effectsJson = null) {
 }
 
 // Logic extractors for Approval Queue
-function applyHpUpdate(characterId, delta) {
-    const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
-    if (!char) return null;
-
-    const newHp = Math.max(0, Math.min(char.max_hp, char.current_hp + delta));
-    db.prepare('UPDATE characters SET current_hp = ? WHERE id = ?').run(newHp, char.id);
-    return char;
-}
-
-function applyCharacterUpdate(characterId, updates) {
-    const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
-    if (!char || !updates) return null;
-
-    const allowedFields = ['inspiration', 'conditions', 'spell_slots', 'concentration_spell', 'equipment'];
-    const sets = [];
-    const values = [];
-
-    for (const field of allowedFields) {
-        if (updates[field] !== undefined) {
-            sets.push(`${field} = ?`);
-            const val = (typeof updates[field] === 'object') ? JSON.stringify(updates[field]) : updates[field];
-            values.push(val);
-        }
-    }
-
-    if (sets.length === 0) return char;
-
-    values.push(char.id);
-    db.prepare(`UPDATE characters SET ${sets.join(', ')} WHERE id = ?`).run(...values);
-    return char;
-}
+// broadcast logs removed, inherited from rulesIntegration and applyEffect
 
 // --- Socket.io ---
 io.on('connection', (socket) => {
@@ -174,11 +212,7 @@ io.on('connection', (socket) => {
         }
 
         for (const effect of effectsArray) {
-            if (effect.type === 'hp') {
-                applyHpUpdate(effect.characterId, effect.delta);
-            } else if (effect.type === 'character') {
-                applyCharacterUpdate(effect.characterId, effect.updates);
-            }
+            applyEffect(effect);
         }
 
         logAction(actor, description + ' (Resolved by LLM)');
@@ -207,13 +241,10 @@ io.on('connection', (socket) => {
 
             if (effectsObj.type === 'multi' && Array.isArray(effectsObj.effects)) {
                 for (const effect of effectsObj.effects) {
-                    if (effect.type === 'hp') applyHpUpdate(effect.characterId, effect.delta);
-                    else if (effect.type === 'character') applyCharacterUpdate(effect.characterId, effect.updates);
+                    applyEffect(effect);
                 }
-            } else if (effectsObj.type === 'hp') {
-                applyHpUpdate(effectsObj.characterId, effectsObj.delta);
-            } else if (effectsObj.type === 'character') {
-                applyCharacterUpdate(effectsObj.characterId, effectsObj.updates);
+            } else {
+                applyEffect(effectsObj);
             }
         }
 
@@ -222,43 +253,136 @@ io.on('connection', (socket) => {
         broadcastPartyState();
     });
 
-    socket.on('update_hp', ({ characterId, delta, actor }) => {
-        const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
-        if (!char) return;
-
-        const newHp = Math.max(0, Math.min(char.max_hp, char.current_hp + delta));
-        const actionText = delta < 0
-            ? `${char.name} took ${Math.abs(delta)} damage. (${newHp}/${char.max_hp} HP)`
-            : `${char.name} was healed for ${delta} HP. (${newHp}/${char.max_hp} HP)`;
-
+    socket.on('update_hp', ({ characterId, delta, actor, damageType }) => {
         if (isApprovalMode) {
-            const effects = JSON.stringify({ type: 'hp', characterId, delta });
+            const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
+            if (!char) return;
+            const actionText = delta < 0
+                ? `${char.name} takes ${Math.abs(delta)} ${damageType || 'untyped'} damage`
+                : `${char.name} is healed for ${delta} HP`;
+            const effects = JSON.stringify({ type: 'hp', characterId, delta, damageType });
             logAction(actor || 'Player', actionText, 'pending', effects);
+            return;
+        }
+
+        let result;
+        if (delta < 0) {
+            result = applyDamageEvent(db, characterId, Math.abs(delta), damageType || 'untyped');
+            if (result.success && result.concentrationCheck) {
+                const state = getSessionState(db, characterId);
+                io.emit('concentration_check_required', {
+                    characterId,
+                    spellName: state.concentratingOn,
+                    dc: result.concentrationCheck.dc,
+                });
+            }
         } else {
-            applyHpUpdate(characterId, delta);
-            logAction(actor || 'System', actionText);
+            result = applyHealEvent(db, characterId, delta);
+        }
+
+        if (result && result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('set_temp_hp', ({ characterId, amount, actor }) => {
+        const result = setTempHpEvent(db, characterId, amount);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('cast_concentration_spell', ({ characterId, spellName, slotLevel, actor }) => {
+        const result = castConcentrationSpellEvent(db, characterId, spellName, slotLevel ?? null);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        } else {
+            socket.emit('rules_error', { message: result.error });
+        }
+    });
+
+    socket.on('drop_concentration', ({ characterId, actor }) => {
+        const result = dropConcentrationEvent(db, characterId);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('concentration_check_result', ({ characterId, spellName, passed, dc }) => {
+        if (!passed) {
+            const result = dropConcentrationEvent(db, characterId);
+            if (result.success) {
+                logAction('System', result.logMessage);
+                broadcastPartyState();
+            }
+        }
+        const char = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId);
+        const label = char ? char.name : `Character ${characterId}`;
+        logAction(label, `${label} ${passed ? 'maintained' : 'lost'} concentration on ${spellName} (DC ${dc}).`);
+    });
+
+    socket.on('apply_condition', ({ characterId, condition, actor }) => {
+        const result = applyConditionEvent(db, characterId, condition);
+        if (result.success && !result.alreadyPresent) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('remove_condition', ({ characterId, condition, actor }) => {
+        const result = removeConditionEvent(db, characterId, condition);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('use_spell_slot', ({ characterId, slotLevel, actor }) => {
+        const result = useSpellSlotEvent(db, characterId, slotLevel);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        } else {
+            socket.emit('rules_error', { message: result.error });
+        }
+    });
+
+    socket.on('short_rest', ({ characterId, actor }) => {
+        const result = shortRestEvent(db, characterId);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
+            broadcastPartyState();
+        }
+    });
+
+    socket.on('long_rest', ({ characterId, actor }) => {
+        const result = longRestEvent(db, characterId);
+        if (result.success) {
+            logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
         }
     });
 
     socket.on('update_character', ({ characterId, updates, actor }) => {
-        const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
-        if (!char || !updates) return;
-
-        const logChanges = [];
-        if (updates.inspiration !== undefined) logChanges.push(updates.inspiration ? 'gained Inspiration' : 'used Inspiration');
-        if (updates.conditions !== undefined) logChanges.push('conditions updated');
-        if (updates.spell_slots !== undefined) logChanges.push('spell slots updated');
-        if (updates.equipment !== undefined) logChanges.push('equipment changed');
-
-        const actionText = `${char.name} ${logChanges.length > 0 ? logChanges.join(', ') : 'was updated'}.`;
-
         if (isApprovalMode) {
+            const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId);
+            if (!char) return;
+            const logChanges = [];
+            if (updates.inspiration !== undefined) logChanges.push(updates.inspiration ? 'gained Inspiration' : 'used Inspiration');
+            if (updates.conditions !== undefined) logChanges.push('conditions updated');
+            if (updates.spell_slots !== undefined) logChanges.push('spell slots updated');
+            if (updates.equipment !== undefined) logChanges.push('equipment changed');
+
+            const actionText = `${char.name} ${logChanges.length > 0 ? logChanges.join(', ') : 'was updated'}.`;
             const effects = JSON.stringify({ type: 'character', characterId, updates });
             logAction(actor || 'Player', actionText, 'pending', effects);
         } else {
-            applyCharacterUpdate(characterId, updates);
-            logAction(actor || 'System', actionText);
+            applyEffect({ type: 'character', characterId, updates });
+            logAction(actor || 'System', 'Character state update applied.');
             broadcastPartyState();
         }
     });
@@ -445,6 +569,17 @@ io.on('connection', (socket) => {
         playerSocketMap.delete(socket.id);
         console.log(`[Socket] Client disconnected: ${socket.id}`);
     });
+});
+
+// --- Cron Jobs ---
+cron.schedule('0 3 * * *', async () => {
+    console.log('[Cron] Running scheduled daily database backup...');
+    try {
+        const backupPath = await backupDatabase();
+        console.log(`[Cron] Backup successful: ${backupPath}`);
+    } catch (err) {
+        console.error('[Cron] Backup failed:', err.message);
+    }
 });
 
 // --- Start ---
