@@ -12,22 +12,25 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
-# Enable SQLite in Alpine
-RUN apk add --no-cache python3 make g++
+# Enable SQLite and build tools in Alpine
+# gcompat often helps with pre-built binaries expecting glibc
+RUN apk add --no-cache python3 make g++ poppler-utils libc6-compat gcompat
 
 # Copy backend package files and install production dependencies
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm install --omit=dev
+# Build from source to ensure binary compatibility with Alpine
+RUN npm install --build-from-source --omit=dev
 
 # Copy backend source
 COPY server/ ./
 
+
 # Copy built frontend from Stage 1 into the server's expected location
 COPY --from=frontend-builder /app/client/dist /app/client/dist
 
-# Ensure the data directory exists and is writable
-RUN mkdir -p /app/data && chown -R node:node /app/data
+# Ensure the app directories exist and are writable by the node user
+RUN mkdir -p /app/server /app/client && chown -R node:node /app
 
 # Switch to non-root user for security
 USER node

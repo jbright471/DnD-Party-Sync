@@ -1,14 +1,14 @@
 import React from 'react';
 import CharacterCard from './CharacterCard';
 
-export default function PartyDashboard({ party, onAddClick, prevHpMap }) {
+export default function PartyDashboard({ party, onAddClick, onCharacterClick, prevHpMap }) {
     return (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div className="flex flex-col h-full">
             {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div className="flex justify-between items-center mb-5">
                 <div>
-                    <h1 className="fantasy-heading" style={{ fontSize: '1.6rem', margin: 0 }}>⚔ The Party</h1>
-                    <p style={{ color: 'var(--dnd-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0' }}>
+                    <h1 className="fantasy-heading text-2xl m-0">⚔ The Party</h1>
+                    <p className="text-dnd-muted text-xs mt-1 mb-0">
                         {party.length} {party.length === 1 ? 'adventurer' : 'adventurers'} in the field
                     </p>
                 </div>
@@ -19,35 +19,24 @@ export default function PartyDashboard({ party, onAddClick, prevHpMap }) {
 
             {/* Grid */}
             {party.length === 0 ? (
-                <div style={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--dnd-muted)',
-                    gap: '0.75rem',
-                }}>
-                    <div style={{ fontSize: '3rem', opacity: 0.3 }}>🏕</div>
-                    <p style={{ margin: 0, fontSize: '0.9rem' }}>No adventurers yet. Add your first character!</p>
+                <div className="flex-1 flex flex-col items-center justify-center text-dnd-muted gap-3">
+                    <div className="text-5xl opacity-30">🏕</div>
+                    <p className="m-0 text-sm">No adventurers yet. Add your first character!</p>
                     <button className="btn-secondary" onClick={onAddClick}>Create Character</button>
                 </div>
             ) : (
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-                    gap: '1rem',
-                    alignContent: 'start',
-                    overflowY: 'auto',
-                    flex: 1,
-                    paddingRight: '0.25rem',
-                }}>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4 content-start overflow-y-auto flex-1 pr-1">
                     {party.map(char => (
-                        <CharacterCard
-                            key={char.id}
-                            character={char}
-                            prevHp={prevHpMap?.[char.id] ?? char.currentHp}
-                        />
+                        <div 
+                            key={char.id} 
+                            onClick={() => onCharacterClick?.(char)} 
+                            className="cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                        >
+                            <CharacterCard
+                                character={char}
+                                prevHp={prevHpMap?.[char.id] ?? char.currentHp}
+                            />
+                        </div>
                     ))}
                 </div>
             )}

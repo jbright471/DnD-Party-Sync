@@ -6,28 +6,30 @@ A containerized, real-time companion application for managing D&D campaigns, com
 
 ## Architecture
 
-**Frontend:** React (Vite) + Vanilla CSS + Socket.io-client
+**Frontend:** React (Vite) + Tailwind CSS + Socket.io-client
 **Backend:** Node.js + Express + Socket.io
-**Logic:** 5e Rules Engine (`rulesEngine.js`) for automated math & validation
-**Database:** SQLite (`better-sqlite3`) with persistent Session States
-**Deployment:** Docker + Portainer + Cloudflare Tunnels
-**AI Integration:** Local Ollama API (Gemma/Llama) for narrative recaps and action resolution
+**Logic:** 5e Rules Engine (`rulesEngine.js`) for automated math & gear passives
+**Database:** SQLite (`better-sqlite3`) with persistent Session States & Homebrew Inventory
+**Deployment:** Docker + Portainer + Cloudflare Tunnels (Optimized for Local SSD)
+**AI Integration:** Local Ollama API (`gemma3:27b`) for creative lore, item parsing, and PDF extraction
 
 ## Features
 
-- **Automated 5e Rules Engine:** Real-time calculation of HP, AC, resistances, and concentration DCs.
-- **Advanced Party Dashboard:** Geometric UI with animated HP bars, color-shifting status, and spell slot tracking.
-- **PDF-to-Layout Importer:** High-fidelity character extraction using `pdftotext -layout` and structured LLM parsing.
-- **Dynamic Initiative Tracker:** Combat ordering with integrated condition tokens and concentration indicators.
-- **Concentration Alert System:** Automatic detection and modal prompts for concentration checks on damage.
-- **Session Recaps:** Narrative summaries of your session's highlights using local AI.
-- **Real-Time Data Sync:** Zero-latency updates for the entire party via Socket.io.
+- **🎮 DM Command Center:** PIN-secured orchestrator dashboard with God-Eye party views and master stat overrides.
+- **🎲 Animated Dice Tray:** Real-time synchronized dice rolling with physics-inspired animations and D&D math.
+- **👹 Combat Commander:** Pre-built encounter library and on-the-fly monster spawning with initiative integration.
+- **🌫️ Combat Fog of War:** Hide/Reveal combatants and obscure monster HP (Ghosting) for players.
+- **🔮 Creative AI Lore Master:** Dedicated creative console for generating evocative room descriptions, NPCs, and loot.
+- **🛡️ Equipment Manager:** Equip/Unequip items in real-time with automatic stat recalculation.
+- **🪄 Spellcasting Layer:** Interactive spell slot tracking and active concentration management.
+- **🔄 Hybrid Sync Engine:** Re-sync with D&D Beyond while preserving local homebrew items and buffs.
+- **📊 Advanced Party Dashboard:** Mobile-first Tailwind UI with animated HP bars and status indicators.
 
 ## Setup & Deployment
 
 1. Clone the repository.
-2. Initialize `docker-compose up -d`.
+2. Initialize `docker compose up --build -d`.
 3. The Vite frontend runs on port `5173` and the Express backend runs on `3001` (accessible via proxy `3002` externally).
-4. For AI integrations, ensure the local Ollama instance URL is correctly mapped in your environment files.
+4. For AI integrations, ensure the local Ollama instance URL is correctly mapped in your environment files (defaulting to port `11436` for Tesla P40 optimization).
 
 *Refer to the /server and /client directories for specific `npm` commands during development.*

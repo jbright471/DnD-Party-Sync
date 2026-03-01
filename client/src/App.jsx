@@ -8,17 +8,16 @@ import SessionRecap from './components/SessionRecap';
 import PartyNotes from './components/PartyNotes';
 import DmWhisperPanel from './components/DmWhisperPanel';
 import HomebrewCreator from './components/HomebrewCreator';
+import CharacterSheetModal from './components/CharacterSheetModal';
+import Compendium from './components/Compendium';
+import DmDashboard from './components/DmDashboard';
+import DiceRoller from './components/DiceRoller';
 
 // ── New components from rules engine phase ───────────────────────────────────
-// Drop InitiativeTracker.jsx + CharacterCard.jsx + ConcentrationAlert.jsx
-// into client/src/components/ — they replace the old InitiativeTracker.
 import InitiativeTracker from './components/InitiativeTracker';
 import { ConcentrationAlert } from './components/ConcentrationAlert';
 
 // ─── Prop adapter ─────────────────────────────────────────────────────────────
-// Normalises snake_case server fields → camelCase for components.
-// Works with both the legacy flat columns AND the new resolved state shape,
-// so no server change is needed to get the new components rendering.
 function normaliseCharacter(raw) {
   return {
     id:              raw.id,
@@ -38,7 +37,6 @@ function normaliseCharacter(raw) {
       return v;
     })(),
     deathSaves: raw.death_saves ?? raw.deathSaves ?? { successes: 0, failures: 0 },
-    // Spread raw so PartyDashboard / ActionLog keep all legacy fields they depend on
     ...raw,
   };
 }
@@ -69,8 +67,10 @@ function App() {
   const [isConnected,         setIsConnected]         = useState(false);
   const [isApprovalMode,      setIsApprovalMode]      = useState(false);
   const [showHomebrewCreator, setShowHomebrewCreator] = useState(false);
+  const [showCompendium,      setShowCompendium]      = useState(false);
+  const [selectedCharacter,   setSelectedCharacter]   = useState(null);
+  const [isDm,                setIsDm]                = useState(false);
 
-  // Ref so HP-flash animation reads previous value without extra re-renders
   const prevHpMapRef = useRef({});
 
   // ── Socket Listeners ───────────────────────────────────────────────────────
@@ -81,7 +81,6 @@ function App() {
     socket.on('party_state', (data) => {
       const normalised = data.map(normaliseCharacter);
       setParty(prev => {
-        // Snapshot previous HP values before the state update lands
         prev.forEach(c => { prevHpMapRef.current[c.id] = c.currentHp; });
         return normalised;
       });
@@ -117,17 +116,29 @@ function App() {
     setRoundNumber(1);
   }
 
+  function toggleDm() {
+    if (isDm) {
+      setIsDm(false);
+    } else {
+      const pin = prompt("Enter Master PIN:");
+      if (pin === "1234") { 
+        setIsDm(true);
+      } else {
+        alert("Invalid Key.");
+      }
+    }
+  }
+
   // ── Tab content ────────────────────────────────────────────────────────────
   const renderTabContent = () => {
     switch (activeTab) {
       case 'party':
-        // prevHpMap flows into PartyDashboard → CharacterCard for the HP flash.
-        // If your PartyDashboard doesn't use it yet, it's a no-op extra prop.
         return (
           <PartyDashboard
             party={party}
             prevHpMap={prevHpMapRef.current}
             onAddClick={() => {/* trigger your importer */}}
+            onCharacterClick={(char) => setSelectedCharacter(char)}
           />
         );
 
@@ -139,7 +150,7 @@ function App() {
               roundNumber={roundNumber}
               onNextTurn={handleNextTurn}
               onEndEncounter={handleEndEncounter}
-              isGm={true}
+              isGm={isDm}
             />
           </div>
         );
@@ -157,8 +168,6 @@ function App() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-      {/* ===== Header ===== */}
       <header style={{
         padding: '0.75rem 1.5rem',
         background: 'var(--dnd-surface)',
@@ -169,8 +178,12 @@ function App() {
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <h1 className="fantasy-heading" style={{ fontSize: '1.3rem', margin: 0 }}>
-            🐉 DnD Party Sync
+          <h1 
+            className="fantasy-heading cursor-help select-none" 
+            style={{ fontSize: '1.3rem', margin: 0 }}
+            onClick={toggleDm}
+          >
+            🐉 DnD Party Sync {isDm && <span className="text-dnd-gold text-xs ml-2">[DM]</span>}
           </h1>
           <div style={{
             width: '8px', height: '8px', borderRadius: '50%',
@@ -182,80 +195,111 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button
             className="btn-secondary"
+            onClick={() => setShowCompendium(true)}
+            style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+          >
+            📜 Compendium
+          </button>
+          <button
+            className="btn-secondary"
             onClick={() => setShowHomebrewCreator(true)}
             style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
           >
-            🔮 Homebrew
+            🔮 Creator
           </button>
-          <label style={{
-            display: 'flex', alignItems: 'center', gap: '6px',
-            cursor: 'pointer', fontSize: '0.8rem', color: 'var(--dnd-muted)',
-          }}>
-            <input
-              type="checkbox"
-              checked={isApprovalMode}
-              onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)}
-              style={{ accentColor: 'var(--dnd-gold)' }}
-            />
-            DM Queue
-          </label>
+          {isDm && (
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              cursor: 'pointer', fontSize: '0.8rem', color: 'var(--dnd-gold)',
+            }}>
+              <input
+                type="checkbox"
+                checked={isApprovalMode}
+                onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)}
+                style={{ accentColor: 'var(--dnd-gold)' }}
+              />
+              DM Queue
+            </label>
+          )}
         </div>
       </header>
 
-      {/* ===== Tab Navigation ===== */}
-      <nav className="tab-nav" style={{ flexShrink: 0 }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            className={`tab-btn ${activeTab === tab.id ? 'tab-active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* ===== Main Content ===== */}
-      <div className="app-main-grid" style={{
-        flex: 1,
-        display: 'grid',
-        gridTemplateColumns: '1fr 380px',
-        overflow: 'hidden',
-      }}>
-        <main style={{ padding: '1.25rem 1.5rem', overflowY: 'auto' }}>
-          {renderTabContent()}
+      {/* Main Layout Toggle */}
+      {isDm ? (
+        <main style={{ flex: 1, padding: '1.5rem', overflowY: 'auto' }}>
+          <DmDashboard 
+            party={party}
+            logs={logs}
+            isApprovalMode={isApprovalMode}
+            onCharacterClick={(char) => setSelectedCharacter(char)}
+            socket={socket}
+          />
         </main>
+      ) : (
+        <>
+          <nav className="tab-nav" style={{ flexShrink: 0 }}>
+            {TABS.map(tab => (
+              <button
+                key={tab.id}
+                className={`tab-btn ${activeTab === tab.id ? 'tab-active' : ''}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
 
-        <aside className="app-sidebar" style={{
-          borderLeft: '1px solid var(--dnd-border)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            <ActionLog logs={logs} party={party} approvalMode={isApprovalMode} />
-          </div>
-          <div style={{ borderTop: '1px solid var(--dnd-border)', padding: '1rem' }}>
-            <DndBeyondImporter />
-          </div>
-        </aside>
-      </div>
+          <div className="app-main-grid" style={{
+            flex: 1,
+            display: 'grid',
+            gridTemplateColumns: '1fr 380px',
+            overflow: 'hidden',
+          }}>
+            <main style={{ padding: '1.25rem 1.5rem', overflowY: 'auto' }}>
+              {renderTabContent()}
+            </main>
 
-      {/* ===== Floating Panels ===== */}
+            <aside className="app-sidebar" style={{
+              borderLeft: '1px solid var(--dnd-border)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}>
+              <div style={{ padding: '1rem', borderBottom: '1px solid var(--dnd-border)' }}>
+                <DiceRoller characterName="Player" />
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <ActionLog logs={logs} party={party} approvalMode={isApprovalMode} />
+              </div>
+              <div style={{ borderTop: '1px solid var(--dnd-border)', padding: '1rem' }}>
+                <DndBeyondImporter />
+              </div>
+            </aside>
+          </div>
+        </>
+      )}
+
       <RulesAssistant />
       <DmWhisperPanel party={party} />
 
-      {/* ConcentrationAlert — full-screen overlay, always mounted.
-          characterId={null} = DM mode (shows all checks).
-          When you add player auth, pass the player's characterId here.        */}
       <ConcentrationAlert
         socket={socket}
         characterId={null}
       />
 
-      {/* ===== Modals ===== */}
       {showHomebrewCreator && (
         <HomebrewCreator onClose={() => setShowHomebrewCreator(false)} />
+      )}
+
+      {showCompendium && (
+        <Compendium party={party} onClose={() => setShowCompendium(false)} />
+      )}
+
+      {selectedCharacter && (
+        <CharacterSheetModal 
+          character={selectedCharacter} 
+          onClose={() => setSelectedCharacter(null)} 
+        />
       )}
     </div>
   );

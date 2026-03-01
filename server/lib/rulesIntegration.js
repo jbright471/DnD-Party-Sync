@@ -17,6 +17,7 @@ const {
   isConcentrationSpell,
   resolveConcentrationCheckDC,
   resolveCurrentAC,
+  resolveFinalAbilityScores,
   applyCondition,
   removeCondition,
   useSpellSlot,
@@ -135,46 +136,54 @@ function getCharacterData(db, characterId) {
     } catch (_) {}
   }
 
-  // Merge flat columns as fallbacks for backward compatibility
+  const inventory = char.inventory ? JSON.parse(char.inventory) : [];
+  const homebrewInventory = char.homebrew_inventory ? JSON.parse(char.homebrew_inventory) : [];
+  const abilityScores = charData.abilityScores ?? (char.stats ? JSON.parse(char.stats) : {});
+  const spellSlots = charData.spellSlots ?? (char.spell_slots ? JSON.parse(char.spell_slots) : {});
+  
+  // Normalize skills: if object (LLM format), convert to array of keys based on non-zero modifiers
+  // This matches the frontend expectation of an array of proficient skill names.
+  let skills = charData.skills ?? (char.skills ? JSON.parse(char.skills) : []);
+  if (skills && typeof skills === 'object' && !Array.isArray(skills)) {
+    // If it's the LLM object format { acrobatics: 5, ... }, we'll treat 
+    // skills with higher modifiers as "proficient" for the UI's simple check.
+    skills = Object.entries(skills)
+      .filter(([_, val]) => val > 0)
+      .map(([name, _]) => name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1').trim());
+  }
+
+  const spells = charData.spells ?? (char.spells ? JSON.parse(char.spells) : []);
+  const features = charData.features ?? (char.features ? JSON.parse(char.features) : []);
+
   return {
+    ...charData, // Spread first so normalized fields below take precedence
     id: char.id,
     name: char.name,
+    class: char.class,
+    level: char.level,
     baseMaxHp: charData.baseMaxHp ?? char.max_hp,
     baseAc: charData.baseAc ?? char.ac,
-    abilityScores: charData.abilityScores ?? {},
-    spellSlots: charData.spellSlots ?? {},
-    spells: charData.spells ?? [],
-    features: charData.features ?? [],
-    inventory: charData.inventory ?? [],
-    ...charData,
+    abilityScores,
+    spellSlots,
+    spells: Array.isArray(spells) ? spells : [],
+    features: Array.isArray(features) ? features : [],
+    skills: Array.isArray(skills) ? skills : [],
+    inventory: Array.isArray(inventory) ? inventory : [],
+    homebrewInventory: Array.isArray(homebrewInventory) ? homebrewInventory : [],
+    backstory: char.backstory || charData.backstory || '',
+    raw_dndbeyond_json: char.raw_dndbeyond_json,
   };
 }
 
 // ---------------------------------------------------------------------------
 // CORE EVENT HANDLERS
-// These are the functions to use in server.js socket handlers
 // ---------------------------------------------------------------------------
 
-/**
- * APPLY DAMAGE
- * Replaces applyHpUpdate() for damage events.
- * Handles: temp HP absorption, resistance, immunity, vulnerability,
- *          concentration checks, automatic death save mode.
- *
- * @param {object} db
- * @param {number} characterId
- * @param {number} rawAmount - positive integer
- * @param {string} damageType - e.g. 'fire', 'piercing'
- * @param {string[]} [resistances] - override if known; otherwise pulled from character
- * @returns {object} result with newHp, concentrationCheck, log message
- */
 function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', resistances = null) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
 
-  // Pull resistances/immunities/vulnerabilities from character data
-  // These should be stored in data_json when available; fall back to empty arrays
   const charResistances = resistances ?? (char.resistances || []);
   const charImmunities = char.immunities || [];
   const charVulnerabilities = char.vulnerabilities || [];
@@ -189,14 +198,11 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
     state.activeConditions
   );
 
-  // Check if concentration is broken
   const concCheck = resolveConcentrationCheckDC(damageResult.damageDealt, state.concentratingOn);
 
-  // Update state
   state.currentHp = damageResult.newCurrentHp;
   state.tempHp = damageResult.newTempHp;
 
-  // If character dropped to 0, clear concentration automatically
   if (state.currentHp === 0 && state.concentratingOn) {
     const concChange = resolveConcentrationChange(state.concentratingOn, null, state.activeBuffs);
     state.concentratingOn = null;
@@ -205,7 +211,6 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
 
   saveSessionState(db, state);
 
-  // Build descriptive log message
   let logMsg = `${char.name} took ${damageResult.damageDealt} ${damageType} damage`;
   if (damageResult.modifier === 'immune') logMsg = `${char.name} is immune to ${damageType} damage`;
   else if (damageResult.modifier === 'resistance') logMsg += ` (halved from ${rawAmount})`;
@@ -225,298 +230,130 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
   };
 }
 
-/**
- * APPLY HEALING
- *
- * @param {object} db
- * @param {number} characterId
- * @param {number} amount
- * @returns {object} result
- */
 function applyHealEvent(db, characterId, amount) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
 
-  const result = resolveHeal(
-    { currentHp: state.currentHp, tempHp: state.tempHp, maxHp: char.baseMaxHp },
-    amount
-  );
-
+  const result = resolveHeal({ currentHp: state.currentHp, tempHp: state.tempHp, maxHp: char.baseMaxHp }, amount);
   state.currentHp = result.newCurrentHp;
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    newHp: state.currentHp,
-    healed: result.healed,
-    logMessage: `${char.name} was healed for ${result.healed} HP. HP: ${state.currentHp}/${char.baseMaxHp}`,
-  };
+  return { success: true, newHp: state.currentHp, healed: result.healed, logMessage: `${char.name} was healed for ${result.healed} HP. HP: ${state.currentHp}/${char.baseMaxHp}` };
 }
 
-/**
- * SET TEMP HP
- * Per 5e rules, temp HP does not stack — only the higher value applies.
- *
- * @param {object} db
- * @param {number} characterId
- * @param {number} amount
- * @returns {object} result
- */
 function setTempHpEvent(db, characterId, amount) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   const result = resolveTempHp(state.tempHp, amount);
   state.tempHp = result.newTempHp;
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    newTempHp: state.tempHp,
-    replaced: result.replaced,
-    logMessage: result.replaced
-      ? `${char.name} gained ${amount} temp HP.`
-      : `${char.name} already has ${state.tempHp} temp HP (${amount} ignored — not higher).`,
-  };
+  return { success: true, newTempHp: state.tempHp, replaced: result.replaced, logMessage: result.replaced ? `${char.name} gained ${amount} temp HP.` : `${char.name} already has ${state.tempHp} temp HP.` };
 }
 
-/**
- * CAST CONCENTRATION SPELL
- * Drops the old concentration spell and all its buffs, sets new concentration.
- *
- * @param {object} db
- * @param {number} characterId
- * @param {string} spellName
- * @param {number} [slotLevel] - if provided, uses a spell slot
- * @returns {object} result
- */
 function castConcentrationSpellEvent(db, characterId, spellName, slotLevel = null) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
-  const concChange = resolveConcentrationChange(
-    state.concentratingOn,
-    spellName,
-    state.activeBuffs
-  );
-
-  // Drop old concentration buffs
-  state.activeBuffs = state.activeBuffs.filter(
-    b => !concChange.droppedBuffIds.includes(b.id)
-  );
+  const concChange = resolveConcentrationChange(state.concentratingOn, spellName, state.activeBuffs);
+  state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
   state.concentratingOn = spellName;
-
-  // Use spell slot if requested
   if (slotLevel !== null) {
     const slotResult = useSpellSlot(char.spellSlots, state.spellSlotsUsed, slotLevel);
-    if (!slotResult.success) {
-      return { success: false, error: slotResult.error };
-    }
+    if (!slotResult.success) return { success: false, error: slotResult.error };
     state.spellSlotsUsed = slotResult.newSlotsUsed;
   }
-
   saveSessionState(db, state);
-
-  let logMsg = `${char.name} began concentrating on ${spellName}`;
-  if (concChange.droppedSpell) {
-    logMsg += `, dropping ${concChange.droppedSpell}`;
-  }
-
-  return {
-    success: true,
-    newConcentration: spellName,
-    droppedSpell: concChange.droppedSpell,
-    droppedBuffIds: concChange.droppedBuffIds,
-    logMessage: logMsg,
-  };
+  return { success: true, newConcentration: spellName, droppedSpell: concChange.droppedSpell, droppedBuffIds: concChange.droppedBuffIds, logMessage: `${char.name} began concentrating on ${spellName}${concChange.droppedSpell ? `, dropping ${concChange.droppedSpell}` : ''}` };
 }
 
-/**
- * DROP CONCENTRATION
- * Voluntarily drops concentration (or called automatically when HP hits 0).
- */
 function dropConcentrationEvent(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
-  if (!state.concentratingOn) {
-    return { success: true, logMessage: `${char.name} was not concentrating on anything.` };
-  }
-
+  if (!state.concentratingOn) return { success: true, logMessage: `${char.name} was not concentrating.` };
   const dropped = state.concentratingOn;
   const concChange = resolveConcentrationChange(dropped, null, state.activeBuffs);
-
   state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
   state.concentratingOn = null;
-
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    droppedSpell: dropped,
-    droppedBuffIds: concChange.droppedBuffIds,
-    logMessage: `${char.name} dropped concentration on ${dropped}.`,
-  };
+  return { success: true, droppedSpell: dropped, droppedBuffIds: concChange.droppedBuffIds, logMessage: `${char.name} dropped concentration on ${dropped}.` };
 }
 
-/**
- * APPLY CONDITION
- *
- * @param {object} db
- * @param {number} characterId
- * @param {string} condition - e.g. 'prone', 'poisoned'
- * @returns {object} result
- */
 function applyConditionEvent(db, characterId, condition) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   const result = applyCondition(state.activeConditions, condition);
-
-  if (result.alreadyPresent) {
-    return { success: true, alreadyPresent: true, logMessage: `${char.name} already has ${condition}.` };
-  }
-
+  if (result.alreadyPresent) return { success: true, alreadyPresent: true, logMessage: `${char.name} already has ${condition}.` };
   state.activeConditions = result.newConditions;
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    newConditions: state.activeConditions,
-    logMessage: `${char.name} is now ${condition}.`,
-  };
+  return { success: true, newConditions: state.activeConditions, logMessage: `${char.name} is now ${condition}.` };
 }
 
-/**
- * REMOVE CONDITION
- *
- * @param {object} db
- * @param {number} characterId
- * @param {string} condition
- * @returns {object} result
- */
 function removeConditionEvent(db, characterId, condition) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   const result = removeCondition(state.activeConditions, condition);
   state.activeConditions = result.newConditions;
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    newConditions: state.activeConditions,
-    logMessage: result.wasPresent
-      ? `${char.name} is no longer ${condition}.`
-      : `${char.name} did not have the ${condition} condition.`,
-  };
+  return { success: true, newConditions: state.activeConditions, logMessage: result.wasPresent ? `${char.name} is no longer ${condition}.` : `${char.name} did not have ${condition}.` };
 }
 
-/**
- * USE SPELL SLOT
- *
- * @param {object} db
- * @param {number} characterId
- * @param {number} slotLevel
- * @returns {object} result
- */
 function useSpellSlotEvent(db, characterId, slotLevel) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   const result = useSpellSlot(char.spellSlots, state.spellSlotsUsed, slotLevel);
-
   if (!result.success) return { success: false, error: result.error };
-
   state.spellSlotsUsed = result.newSlotsUsed;
   saveSessionState(db, state);
-
-  const used = result.newSlotsUsed[slotLevel];
-  const max = char.spellSlots[slotLevel] || 0;
-
-  return {
-    success: true,
-    slotsUsed: result.newSlotsUsed,
-    logMessage: `${char.name} used a level ${slotLevel} spell slot. (${used}/${max} used)`,
-  };
+  return { success: true, slotsUsed: result.newSlotsUsed, logMessage: `${char.name} used a level ${slotLevel} spell slot.` };
 }
 
-/**
- * SHORT REST
- * Restores shortRest features. Does NOT restore HP (that's handled by hit dice).
- */
 function shortRestEvent(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   state.featureUses = shortRestFeatures(state.featureUses, char.features || []);
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    logMessage: `${char.name} took a short rest. Short-rest features restored.`,
-  };
+  return { success: true, logMessage: `${char.name} took a short rest.` };
 }
 
-/**
- * LONG REST
- * Restores HP to max, all spell slots, all features, clears conditions.
- * Does NOT clear concentration (that's the player's choice).
- */
 function longRestEvent(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
-
   state.currentHp = char.baseMaxHp;
   state.tempHp = 0;
   state.spellSlotsUsed = restoreAllSpellSlots();
   state.featureUses = longRestFeatures();
   state.hitDiceUsed = {};
   state.deathSaves = { successes: 0, failures: 0 };
-
   saveSessionState(db, state);
-
-  return {
-    success: true,
-    newHp: state.currentHp,
-    logMessage: `${char.name} completed a long rest. HP and resources fully restored.`,
-  };
+  return { success: true, newHp: state.currentHp, logMessage: `${char.name} completed a long rest.` };
 }
 
-/**
- * GET FULL RESOLVED CHARACTER STATE
- * Combines static character data with live session state.
- * Use this for the broadcastPartyState() payload.
- *
- * @param {object} db
- * @param {number} characterId
- * @returns {object} combined view
- */
 function getResolvedCharacterState(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return null;
 
-  const currentAC = resolveCurrentAC(char, state.activeBuffs, state.activeConditions);
+  const currentAC = resolveCurrentAC(char, state.activeBuffs, state.activeConditions, [...char.inventory, ...char.homebrewInventory]);
+  const finalScores = resolveFinalAbilityScores(char, [...char.inventory, ...char.homebrewInventory]);
 
   return {
     id: char.id,
     name: char.name,
-    classes: char.classes,
+    classes: char.classes || [{ name: char.class, level: char.level }],
     currentHp: state.currentHp,
     maxHp: char.baseMaxHp,
     tempHp: state.tempHp,
     ac: currentAC.finalAC,
     acBreakdown: currentAC.breakdown,
+    abilityScores: finalScores,
+    skills: char.skills,
     conditions: state.activeConditions,
     buffs: state.activeBuffs,
     concentratingOn: state.concentratingOn,
@@ -525,25 +362,18 @@ function getResolvedCharacterState(db, characterId) {
     featureUses: state.featureUses,
     activeFeatures: state.activeFeatures,
     deathSaves: state.deathSaves,
+    inventory: char.inventory,
+    homebrewInventory: char.homebrewInventory,
+    spells: char.spells,
+    features: char.features,
+    backstory: char.backstory,
+    raw_dndbeyond_json: char.raw_dndbeyond_json,
   };
 }
 
 module.exports = {
-  // DB helpers (expose for testing)
-  getSessionState,
-  saveSessionState,
-  getCharacterData,
-  getResolvedCharacterState,
-
-  // Event handlers (use these in server.js)
-  applyDamageEvent,
-  applyHealEvent,
-  setTempHpEvent,
-  castConcentrationSpellEvent,
-  dropConcentrationEvent,
-  applyConditionEvent,
-  removeConditionEvent,
-  useSpellSlotEvent,
-  shortRestEvent,
-  longRestEvent,
+  getSessionState, saveSessionState, getCharacterData, getResolvedCharacterState,
+  applyDamageEvent, applyHealEvent, setTempHpEvent, castConcentrationSpellEvent,
+  dropConcentrationEvent, applyConditionEvent, removeConditionEvent, useSpellSlotEvent,
+  shortRestEvent, longRestEvent,
 };

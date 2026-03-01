@@ -4,6 +4,44 @@ All notable changes to the **DnD Party Sync** project will be documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.4.0] - 2026-03-01
+
+### Added
+- **🎮 DM Command Center**: Introduced a persistent, PIN-secured (`1234`) dashboard for the DM with a "God-Eye" view of all player stats.
+- **🎲 Animated Dice Tray**: New physics-inspired rolling system for both players and DM, supporting all standard D&D dice and custom modifiers.
+- **👹 Encounter Library**: Ability to pre-build monster groups and start multi-entity combats with a single click.
+- **🌫️ Fog of War (Combat)**: Toggle visibility for any combatant in the initiative tracker to hide/reveal ambushes to players.
+- **👻 HP Ghosting**: Players now see descriptive health statuses (Bloodied, Critical) for monsters while the DM sees exact numeric values.
+- **⚡ Master Overrides**: DM-only quick-action buttons for instant HP adjustment and condition application/removal on player cards.
+- **🔮 Creative AI Lore Master**: Enhanced Lore Console with historical session tracking and DM-focused creative system prompts.
+
+### Fixed
+- **🚀 SSD Performance Optimization**: Successfully relocated the project to local SSD, eliminating network-drive latency for Docker builds and NPM operations.
+- **🛠️ Socket Reliability**: Improved event handling for real-time dice rolls and initiative state synchronization.
+- **🩺 Character Sheet Stability**: Resolved critical React crashes in the Skills and Inventory tabs by normalizing incoming data as arrays and adding defensive rendering checks.
+- **📜 PDF Extraction Depth**: Increased the LLM context buffer for PDF parsing from 18k to 50k characters, ensuring full Spellbook extraction for high-level characters.
+
+## [1.3.0] - 2026-03-01
+
+### Added
+- **🔮 LLM Item Parser**: Integrated local Ollama (`gemma3:27b`) to extract mechanical modifiers (AC, Stats, Resistances) from plain-text item descriptions.
+- **📜 Homebrew Compendium**: New "Store/Compendium" view for managing custom entities and assigning them to characters.
+- **🛡️ Equipment Management**: Direct Equip/Unequip toggles in Character Sheets with real-time stat recalculation.
+- **🪄 Spellcasting Layer**: Interactive spell slot tracking and active concentration management within character sheets.
+- **🔄 Smart DDB Re-Sync**: Added one-click sync button to refresh character data from D&D Beyond while preserving local homebrew items.
+- **🩺 Diagnostic Endpoint**: Added `/api/characters/import/diag` to monitor Ollama connectivity and system health.
+
+### Changed
+- **💅 Tailwind Refactor**: Converted `PartyDashboard` and `CharacterSheetModal` to full Tailwind CSS for improved mobile responsiveness and "Dark Fantasy" aesthetics.
+- **📊 Improved Data Extraction**: Enhanced D&D Beyond importer to pull full Skills, Spells, Features, and Backstory data.
+- **⚙️ Rules Engine Upgrade**: Recalculated AC and Ability Scores to include modifiers from both standard gear and homebrew items.
+
+### Fixed
+- **🚀 Importer Stability**: Resolved `NOT NULL` constraint crashes by aligning database column names with API response fields.
+- **🐳 Docker Compatibility**: Fixed `better-sqlite3` binary crashes in Alpine containers by forcing a build-from-source and adding `gcompat`.
+- **🧩 AI Parsing Precision**: Hardened LLM prompts to ensure strict camelCase JSON output and reduced character-count truncation.
+- **🛠️ UI "Ghost" Tabs**: Fixed issue where Skills, Inventory, and Spells sections were appearing empty due to missing data mappings.
+
 ## [1.2.0] - 2026-02-28
 
 ### Added

@@ -5,7 +5,6 @@ const crypto = require('crypto');
 
 // ---- Encounters CRUD ----
 
-// GET /api/encounters — list all saved encounters
 router.get('/', (req, res) => {
     try {
         const encounters = db.prepare('SELECT * FROM encounters ORDER BY created_at DESC').all();
@@ -15,7 +14,6 @@ router.get('/', (req, res) => {
     }
 });
 
-// POST /api/encounters — save a pre-built encounter
 router.post('/', (req, res) => {
     const { name, monsters } = req.body;
     if (!name || !monsters || !Array.isArray(monsters)) {
@@ -32,7 +30,6 @@ router.post('/', (req, res) => {
     }
 });
 
-// DELETE /api/encounters/:id
 router.delete('/:id', (req, res) => {
     try {
         db.prepare('DELETE FROM encounters WHERE id = ?').run(req.params.id);
@@ -44,19 +41,33 @@ router.delete('/:id', (req, res) => {
 
 // ---- Initiative Tracker State ----
 
-// GET /api/initiative — get current tracker state
 router.get('/tracker', (req, res) => {
     try {
-        const tracker = db.prepare('SELECT * FROM initiative_tracker ORDER BY sort_order ASC, initiative DESC').all();
-        res.json(tracker);
+        res.json(getTrackerState());
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Helper: Load encounter + party into initiative tracker
+function spawnMonster(monsterData) {
+    const { name, hp, ac, initiative_mod, is_hidden } = monsterData;
+    
+    // Roll initiative: d20 + modifier
+    const initRoll = Math.floor(Math.random() * 20) + 1 + (initiative_mod || 0);
+    const instanceId = crypto.randomUUID();
+
+    const insertStmt = db.prepare(`
+        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, instance_id)
+        VALUES (?, 'monster', ?, ?, ?, ?, 0, ?, 0, ?)
+    `);
+
+    insertStmt.run(name, initRoll, hp || 10, hp || 10, ac || 10, is_hidden ? 1 : 0, instanceId);
+    
+    resortTracker();
+    return getTrackerState();
+}
+
 function startEncounter(encounterId, partyCharacters) {
-    // Clear any existing tracker state
     db.prepare('DELETE FROM initiative_tracker').run();
 
     const encounter = db.prepare('SELECT * FROM encounters WHERE id = ?').get(encounterId);
@@ -64,52 +75,43 @@ function startEncounter(encounterId, partyCharacters) {
 
     const monsters = JSON.parse(encounter.monsters);
     const insertStmt = db.prepare(`
-    INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, sort_order, character_id, encounter_id, instance_id)
-    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
-  `);
+        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, character_id, encounter_id, instance_id)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+    `);
 
     let sortOrder = 0;
-
-    // Track monster name counts for duplicate disambiguation
     const monsterNameCounts = {};
 
-    // Add monsters from encounter
     for (const monster of monsters) {
         const count = monster.count || 1;
         if (!monsterNameCounts[monster.name]) monsterNameCounts[monster.name] = 0;
 
         for (let i = 0; i < count; i++) {
             monsterNameCounts[monster.name]++;
-            const instanceNum = monsterNameCounts[monster.name];
             const displayName = count > 1 || monsterNameCounts[monster.name] > 1
-                ? `${monster.name} ${instanceNum}`
+                ? `${monster.name} ${monsterNameCounts[monster.name]}`
                 : monster.name;
 
-            // Roll initiative: d20 + modifier
             const initRoll = Math.floor(Math.random() * 20) + 1 + (monster.initiative_mod || 0);
             const instanceId = crypto.randomUUID();
 
             insertStmt.run(
                 displayName, 'monster', initRoll,
                 monster.hp || 10, monster.hp || 10, monster.ac || 10,
-                sortOrder++, null, encounterId, instanceId
+                0, sortOrder++, null, encounterId, instanceId
             );
         }
     }
 
-    // Add PCs from party
     for (const pc of partyCharacters) {
-        // PCs roll their own initiative — use 0 as placeholder, DM/players set it
         insertStmt.run(
             pc.name, 'pc', 0,
             pc.current_hp, pc.max_hp, pc.ac,
-            sortOrder++, pc.id, encounterId, crypto.randomUUID()
+            0, sortOrder++, pc.id, encounterId, crypto.randomUUID()
         );
     }
 
-    // Sort by initiative descending and update sort_order
     resortTracker();
-
     return getTrackerState();
 }
 
@@ -122,14 +124,25 @@ function resortTracker() {
 function getTrackerState() {
     const tracker = db.prepare('SELECT * FROM initiative_tracker ORDER BY sort_order ASC').all();
     return tracker.map(entity => {
-        if (!entity.character_id) return { ...entity, conditions: [], concentrating_on: null };
-        const session = db.prepare(
-            'SELECT conditions_json, concentrating_on FROM session_states WHERE character_id = ?'
-        ).get(entity.character_id);
+        let conditions = [];
+        let concentrating_on = null;
+
+        if (entity.character_id) {
+            const session = db.prepare(
+                'SELECT conditions_json, concentrating_on FROM session_states WHERE character_id = ?'
+            ).get(entity.character_id);
+            conditions = JSON.parse(session?.conditions_json ?? '[]');
+            concentrating_on = session?.concentrating_on ?? null;
+        }
+
         return {
             ...entity,
-            conditions: JSON.parse(session?.conditions_json ?? '[]'),
-            concentrating_on: session?.concentrating_on ?? null,
+            conditions,
+            concentrating_on,
+            // HP Ghosting: if hidden or monster, we can flag it for the frontend to obscure
+            hp_status: entity.current_hp <= 0 ? 'Dead' : 
+                       (entity.current_hp / entity.max_hp <= 0.25) ? 'Critical' :
+                       (entity.current_hp / entity.max_hp <= 0.5) ? 'Bloodied' : 'Healthy'
         };
     });
 }
@@ -139,11 +152,8 @@ function advanceTurn() {
     if (entries.length === 0) return [];
 
     const activeIdx = entries.findIndex(e => e.is_active);
-
-    // Clear all active state
     db.prepare('UPDATE initiative_tracker SET is_active = 0').run();
 
-    // Set the next entity as active
     const nextIdx = activeIdx === -1 ? 0 : (activeIdx + 1) % entries.length;
     db.prepare('UPDATE initiative_tracker SET is_active = 1 WHERE id = ?').run(entries[nextIdx].id);
 
@@ -151,9 +161,16 @@ function advanceTurn() {
 }
 
 function endEncounter() {
-    // Explicitly reset all is_active states before clearing
     db.prepare('UPDATE initiative_tracker SET is_active = 0').run();
     db.prepare('DELETE FROM initiative_tracker').run();
 }
 
-module.exports = { router, startEncounter, getTrackerState, advanceTurn, endEncounter, resortTracker };
+module.exports = { 
+    router, 
+    startEncounter, 
+    getTrackerState, 
+    advanceTurn, 
+    endEncounter, 
+    resortTracker,
+    spawnMonster 
+};

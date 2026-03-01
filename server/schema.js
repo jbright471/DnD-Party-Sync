@@ -49,6 +49,7 @@ function runMigrations() {
   addColumnSafe('characters', 'backstory', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'raw_dndbeyond_json', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'data_json', "TEXT DEFAULT '{}'"); // New Pivot Column
+  addColumnSafe('characters', 'homebrew_inventory', "TEXT DEFAULT '[]'");
 
   addColumnSafe('action_log', 'status', "TEXT DEFAULT 'applied'");
   addColumnSafe('action_log', 'effects_json', "TEXT DEFAULT NULL");
@@ -79,6 +80,7 @@ function runMigrations() {
       max_hp        INTEGER NOT NULL DEFAULT 0,
       ac            INTEGER NOT NULL DEFAULT 10,
       is_active     INTEGER NOT NULL DEFAULT 0,
+      is_hidden     INTEGER NOT NULL DEFAULT 0,
       sort_order    INTEGER NOT NULL DEFAULT 0,
       character_id  INTEGER DEFAULT NULL,
       encounter_id  INTEGER DEFAULT NULL,

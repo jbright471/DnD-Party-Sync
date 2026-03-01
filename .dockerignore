@@ -1,0 +1,11 @@
+node_modules
+client/node_modules
+server/node_modules
+.git
+.gemini
+.agents
+data/*.db*
+*.pdf
+*.docx
+dist
+client/dist
