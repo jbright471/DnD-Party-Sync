@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Layout-Preserving PDF Importer**: Switched to `pdftotext -layout` for accurate D&D Beyond PDF extraction.
 - **Session State Persistence**: Volatile character resources (temp HP, slots) now persist in a dedicated database table.
 - **Real-time Concentration Tracking**: Automated checks triggered by damage events.
+- **AI Infrastructure Optimization**: Pointed the application to the `ollama-p40` instance (port 11436) to utilize dedicated Tesla P40 VRAM for background tasks.
 
 ### Fixed
 - **HTML Double-Escaping**: Resolved bug where character names containing "&" were rendered as `&amp;` in the session log.
