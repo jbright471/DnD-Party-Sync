@@ -139,7 +139,7 @@ const KNOWN_CONCENTRATION_SPELLS = new Set([
   "hex", "hypnotic pattern", "hold person", "hold monster",
   "web", "entangle", "fog cloud", "silence", "darkness",
   "fly", "haste", "slow", "polymorph", "greater invisibility",
-  "concentration spell", 
+  "concentration spell",
   "shield of faith", "spirit guardians", "call lightning",
   "conjure animals", "conjure woodland beings", "wall of fire",
   "heat metal", "barkskin", "moonbeam", "plant growth",
@@ -229,20 +229,20 @@ function resolveConcentrationCheckDC(damageTaken, concentratingOn) {
 }
 
 function resolveFinalAbilityScores(character, allInventory = []) {
-    const base = character.abilityScores || { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
-    const final = { ...base };
-    const MAP = { 'strength': 'STR', 'dexterity': 'DEX', 'constitution': 'CON', 'intelligence': 'INT', 'wisdom': 'WIS', 'charisma': 'CHA' };
+  const base = character.abilityScores || { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
+  const final = { ...base };
+  const MAP = { 'strength': 'STR', 'dexterity': 'DEX', 'constitution': 'CON', 'intelligence': 'INT', 'wisdom': 'WIS', 'charisma': 'CHA' };
 
-    for (const item of allInventory) {
-        if (item.equipped && item.stats && item.stats.statBonuses) {
-            for (let [stat, bonus] of Object.entries(item.stats.statBonuses)) {
-                let s = stat.toUpperCase();
-                if (MAP[stat.toLowerCase()]) s = MAP[stat.toLowerCase()];
-                if (final[s] !== undefined) final[s] += bonus;
-            }
-        }
+  for (const item of allInventory) {
+    if (item.equipped && item.stats && item.stats.statBonuses) {
+      for (let [stat, bonus] of Object.entries(item.stats.statBonuses)) {
+        let s = stat.toUpperCase();
+        if (MAP[stat.toLowerCase()]) s = MAP[stat.toLowerCase()];
+        if (final[s] !== undefined) final[s] += bonus;
+      }
     }
-    return final;
+  }
+  return final;
 }
 
 function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], allInventory = []) {
@@ -252,34 +252,59 @@ function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], al
   const conMod = getAbilityModifier(scores.CON || 10);
 
   let baseAC = character.baseAc || 10;
-  let acMethod = 'base';
+  let acMethod = 'imported';
+
+  // Fix known issue where PDF import LLM sometimes extracts ONLY the dex mod as AC
+  if (baseAC === dexMod && baseAC < 10) {
+    baseAC = 10 + dexMod;
+    acMethod = 'imported-fixed';
+  }
 
   const equippedArmors = allInventory.filter(item => {
     if (!item.equipped) return false;
     const name = (item.name || '').toLowerCase();
-    return name.includes('leather') || name.includes('studded') || name.includes('chain') || 
-           name.includes('scale') || name.includes('breastplate') || name.includes('half plate') || 
-           name.includes('ring mail') || name.includes('plate');
+    return name.includes('leather') || name.includes('studded') || name.includes('chain') ||
+      name.includes('scale') || name.includes('breastplate') || name.includes('half plate') ||
+      name.includes('ring mail') || name.includes('plate');
   });
+
+  // Calculate unarmored options
+  let unarmoredAC = 10 + dexMod;
+  let unarmoredMethod = 'unarmored-default';
 
   const features = character.features || [];
   const unarmoredDefense = features.find(f => f.name && f.name.toLowerCase().includes('unarmored defense'));
 
-  if (unarmoredDefense && equippedArmors.length === 0) {
+  if (unarmoredDefense) {
     const desc = (unarmoredDefense.description || '').toLowerCase();
     if (desc.includes('constitution')) {
-      baseAC = 10 + dexMod + conMod;
-      acMethod = 'unarmored-barbarian';
+      unarmoredAC = 10 + dexMod + conMod;
+      unarmoredMethod = 'unarmored-barbarian';
     } else if (desc.includes('wisdom')) {
-      baseAC = 10 + dexMod + wisMod;
-      acMethod = 'unarmored-monk';
+      unarmoredAC = 10 + dexMod + wisMod;
+      unarmoredMethod = 'unarmored-monk';
     }
   }
 
   const hasMageArmor = activeBuffs.some(b => b.name?.toLowerCase() === 'mage armor' || b.sourceName?.toLowerCase() === 'mage armor');
-  if (hasMageArmor && equippedArmors.length === 0) {
-    baseAC = 13 + dexMod;
-    acMethod = 'mage-armor';
+  if (hasMageArmor) {
+    if (13 + dexMod > unarmoredAC) {
+      unarmoredAC = 13 + dexMod;
+      unarmoredMethod = 'mage-armor';
+    }
+  }
+
+  // If no armor is equipped, take the best unarmored AC or the imported AC
+  if (equippedArmors.length === 0) {
+    if (unarmoredAC > baseAC) {
+      baseAC = unarmoredAC;
+      acMethod = unarmoredMethod;
+    }
+  } else {
+    // If wearing armor, trust the imported baseAC, but fallback if it's completely wrong
+    if (baseAC < 10) {
+      baseAC = unarmoredAC;
+    }
   }
 
   let acFlatBonus = 0;
@@ -287,18 +312,18 @@ function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], al
   const breakdown = [{ source: acMethod, value: baseAC }];
 
   for (const item of allInventory) {
-      if (item.equipped && item.stats && item.stats.acBonus) {
-          acFlatBonus += item.stats.acBonus;
-          breakdown.push({ source: item.name, type: 'gear-bonus', value: item.stats.acBonus });
-      }
+    if (item.equipped && item.stats && item.stats.acBonus) {
+      acFlatBonus += item.stats.acBonus;
+      breakdown.push({ source: item.name, type: 'gear-bonus', value: item.stats.acBonus });
+    }
   }
 
   for (const buff of activeBuffs) {
     const name = (buff.name || '').toLowerCase();
     const effect = BUFF_EFFECTS[name];
     if (effect && effect.acBonus) {
-        acFlatBonus += effect.acBonus;
-        breakdown.push({ source: name, type: 'buff', value: effect.acBonus });
+      acFlatBonus += effect.acBonus;
+      breakdown.push({ source: name, type: 'buff', value: effect.acBonus });
     }
     if (buff.modifierType === 'setAC') {
       const setValue = parseInt(buff.modifierValue, 10);
