@@ -51,8 +51,7 @@ async function resolveActionLLM(actionText, partyContext) {
 The current valid targets in the party are:
 ${JSON.stringify(trimmedParty, null, 2)}
 
-You must return a JSON array of effect objects. 
-...
+You must return a JSON array of effect objects.
 Action description to resolve:
 "${actionText}"
 
@@ -195,13 +194,84 @@ Return ONLY JSON with acBonus, statBonuses, resistances, immunities, speedBonus.
     }
 }
 
+// ---- Lore Assistant (Phase 5.5) ----
+
+async function generateLoreLLM(promptText) {
+    const systemPrompt = `You are an expert Dungeon Master and creative writer. 
+Your goal is to provide evocative, atmospheric, and high-fantasy descriptions and ideas.
+- If asked for a description, use sensory details (smell, sound, lighting).
+- If asked for NPCs, give them a unique quirk or motivation.
+- If asked for loot, make it sound unique and storied.
+- Keep responses concise but flavorful.
+- Avoid game-mechanics unless specifically asked.`;
+
+    try {
+        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: DEFAULT_MODEL,
+                system: systemPrompt,
+                prompt: promptText,
+                stream: false,
+                options: { temperature: 0.8 }
+            })
+        });
+        if (!res.ok) throw new Error(`Ollama API error: ${res.statusText}`);
+        const data = await res.json();
+        return data.response;
+    } catch (e) {
+        console.error('[Ollama] Error lore assistant:', e.message);
+        return "The weave is silent... (Ollama Error)";
+    }
+}
+
+// ---- Loot Generator (Phase 8.2) ----
+
+async function generateLootLLM(context) {
+    const prompt = `You are a D&D 5e loot generator. 
+Generate a JSON array of 1-3 unique items found in this context: ${context}
+
+Output format:
+[
+  {
+    "name": "string",
+    "type": "item/weapon/armor",
+    "rarity": "Common/Uncommon/Rare/Very Rare",
+    "description": "Flavorable visual description and history",
+    "stats": {"acBonus": 0, "statBonuses": {}, "damage": "string"}
+  }
+]
+Return ONLY raw JSON array.`;
+
+    try {
+        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: DEFAULT_MODEL,
+                prompt: prompt,
+                stream: false,
+                format: 'json'
+            })
+        });
+        if (!res.ok) throw new Error(`Ollama API error: ${res.statusText}`);
+        const data = await res.json();
+        const response = data.response.trim();
+        try {
+            return JSON.parse(response);
+        } catch (e) {
+            const cleaned = response.replace(/^```json/g, '').replace(/```$/g, '').trim();
+            return JSON.parse(cleaned);
+        }
+    } catch (e) {
+        console.error('[Ollama] Error generating loot:', e.message);
+        return [];
+    }
+}
+
 // ---- Advanced Character PDF Parser (Pivot Upgrade) ----
 const { validateCharacter } = require('./lib/validator');
-
-function buildParserSystemPrompt() {
-    return `You are a precise data extraction engine for D&D Beyond character sheet PDFs.
-Extract structured data into JSON. Return ONLY raw JSON.`;
-}
 
 async function parseCharacterPdfLLM(pdfText) {
     const systemPrompt = `You are a high-precision data extractor for D&D 5e character sheets.
@@ -226,7 +296,7 @@ Rules:
 
     const userPrompt = `Extract character from text:
 ---
-${pdfText.substring(0, 50000)}
+${pdfText.substring(0, 18000)}
 ---`;
 
     try {
@@ -271,38 +341,6 @@ ${pdfText.substring(0, 50000)}
     }
 }
 
-// ---- Lore Assistant (Phase 5.5) ----
-
-async function generateLoreLLM(promptText) {
-    const systemPrompt = `You are an expert Dungeon Master and creative writer. 
-Your goal is to provide evocative, atmospheric, and high-fantasy descriptions and ideas.
-- If asked for a description, use sensory details (smell, sound, lighting).
-- If asked for NPCs, give them a unique quirk or motivation.
-- If asked for loot, make it sound unique and storied.
-- Keep responses concise but flavorful.
-- Avoid game-mechanics unless specifically asked.`;
-
-    try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: DEFAULT_MODEL,
-                system: systemPrompt,
-                prompt: promptText,
-                stream: false,
-                options: { temperature: 0.8 } // Higher temperature for creativity
-            })
-        });
-        if (!res.ok) throw new Error(`Ollama API error: ${res.statusText}`);
-        const data = await res.json();
-        return data.response;
-    } catch (e) {
-        console.error('[Ollama] Error lore assistant:', e.message);
-        return "The weave is silent... (Ollama Error)";
-    }
-}
-
 module.exports = {
     askRulesAssistant,
     resolveActionLLM,
@@ -310,5 +348,6 @@ module.exports = {
     generateHomebrewStats,
     parseItemDescriptionLLM,
     parseCharacterPdfLLM,
-    generateLoreLLM
+    generateLoreLLM,
+    generateLootLLM
 };

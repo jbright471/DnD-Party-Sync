@@ -70,4 +70,15 @@ router.delete('/:id', (req, res) => {
     }
 });
 
+// PATCH /api/characters/:id/token
+router.patch('/:id/token', (req, res) => {
+    const { token_image } = req.body;
+    try {
+        db.prepare('UPDATE characters SET token_image = ? WHERE id = ?').run(token_image, req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = { router, getAllCharacters };

@@ -47,6 +47,7 @@ function runMigrations() {
   addColumnSafe('characters', 'inventory', "TEXT DEFAULT '[]'");
   addColumnSafe('characters', 'spells', "TEXT DEFAULT '{}'");
   addColumnSafe('characters', 'backstory', "TEXT DEFAULT ''");
+  addColumnSafe('characters', 'token_image', "TEXT DEFAULT NULL");
   addColumnSafe('characters', 'raw_dndbeyond_json', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'data_json', "TEXT DEFAULT '{}'"); // New Pivot Column
   addColumnSafe('characters', 'homebrew_inventory', "TEXT DEFAULT '[]'");
@@ -148,9 +149,11 @@ function runMigrations() {
     CREATE TABLE IF NOT EXISTS maps (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
-      image_data  TEXT, -- Base64 or local path
+      image_path  TEXT, -- Path to file on disk
       grid_size   INTEGER DEFAULT 50,
       is_active   INTEGER DEFAULT 0,
+      group_id    TEXT DEFAULT NULL, -- UUID for multi-level sets
+      level_order INTEGER DEFAULT 0, -- Order of levels (0, 1, 2...)
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -165,6 +168,41 @@ function runMigrations() {
       is_hidden    INTEGER DEFAULT 0,
       FOREIGN KEY (map_id) REFERENCES maps(id) ON DELETE CASCADE
     );
+
+    -- ---- Phase 8: World Building ----
+    CREATE TABLE IF NOT EXISTS npcs (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      name         TEXT NOT NULL,
+      race         TEXT,
+      description  TEXT,
+      occupation   TEXT,
+      location     TEXT,
+      secrets      TEXT,
+      notes        TEXT,
+      stats_json   TEXT DEFAULT '{}',
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- ---- Phase 9: Campaign Management ----
+    CREATE TABLE IF NOT EXISTS quests (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      title        TEXT NOT NULL,
+      description  TEXT,
+      dm_secrets   TEXT,
+      status       TEXT DEFAULT 'active', -- 'active', 'completed', 'failed'
+      is_public    INTEGER DEFAULT 1,
+      rewards      TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS campaign_state (
+      key          TEXT PRIMARY KEY,
+      value        TEXT
+    );
+
+    -- Initialize default time
+    INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('current_time', '{"day":1, "month":1, "year":1492, "hour":8, "minute":0}');
+    INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('current_weather', '{"condition":"Clear", "impact":"None"}');
   `);
 
   console.log('[DB] Migrations complete.');

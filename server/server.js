@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -9,6 +10,10 @@ const { router: characterRouter, getAllCharacters } = require('./routes/characte
 const importerRouter = require('./routes/importer');
 const { router: initiativeRouter, startEncounter, getTrackerState, advanceTurn, endEncounter, resortTracker, spawnMonster } = require('./routes/initiative');
 const mapsRouter = require('./routes/maps');
+const npcsRouter = require('./routes/npcs');
+const lootRouter = require('./routes/loot');
+const questsRouter = require('./routes/quests');
+const worldRouter = require('./routes/world');
 const notesRouter = require('./routes/notes');
 const homebrewRouter = require('./routes/homebrew');
 const db = require('./db');
@@ -90,8 +95,23 @@ app.use('/api/characters/import', importerRouter);
 app.use('/api/encounters', initiativeRouter);
 app.use('/api/initiative', initiativeRouter);
 app.use('/api/maps', mapsRouter);
+app.use('/api/npcs', npcsRouter);
+app.use('/api/loot', lootRouter);
+app.use('/api/quests', questsRouter);
+app.use('/api/world', worldRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/homebrew', homebrewRouter);
+
+// New Auth Route
+app.post('/api/auth/dm', (req, res) => {
+    const { pin } = req.body;
+    const masterPin = process.env.DM_PIN || '1234';
+    if (pin === masterPin) {
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ success: false, error: 'Invalid PIN' });
+    }
+});
 
 app.get('/api/log', (req, res) => {
     const logs = db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all();
@@ -172,11 +192,23 @@ function broadcastNotes() {
     io.emit('notes_state', notes);
 }
 
+function broadcastWorldState() {
+    try {
+        const time = db.prepare('SELECT value FROM campaign_state WHERE key = "current_time"').get();
+        const weather = db.prepare('SELECT value FROM campaign_state WHERE key = "current_weather"').get();
+        io.emit('world_state', {
+            time: JSON.parse(time?.value || '{}'),
+            weather: JSON.parse(weather?.value || '{}')
+        });
+    } catch (e) {}
+}
+
 function broadcastMapState() {
     const map = db.prepare('SELECT * FROM maps WHERE is_active = 1').get();
     if (map) {
         const tokens = db.prepare('SELECT * FROM map_tokens WHERE map_id = ?').all(map.id);
-        io.emit('map_state', { ...map, tokens });
+        const image_data = map.image_path ? `/api/maps/image/${path.basename(map.image_path)}` : null;
+        io.emit('map_state', { ...map, image_data, tokens });
     } else {
         io.emit('map_state', null);
     }
@@ -198,6 +230,7 @@ io.on('connection', (socket) => {
     broadcastInitiative();
     broadcastNotes();
     broadcastMapState();
+    broadcastWorldState();
     socket.emit('approval_mode', isApprovalMode);
 
     socket.on('log_action', async ({ actor, description, useLlm }, callback) => {
@@ -328,12 +361,28 @@ io.on('connection', (socket) => {
 
     socket.on('short_rest', ({ characterId, actor }) => {
         const result = shortRestEvent(db, characterId);
-        if (result.success) { logAction(actor || 'System', result.logMessage); broadcastPartyState(); }
+        if (result.success) { 
+            logAction(actor || 'System', result.logMessage); 
+            broadcastPartyState();
+            // Advance time +1hr
+            socket.emit('advance_time', { minutes: 60 });
+        }
     });
 
     socket.on('long_rest', ({ characterId, actor }) => {
         const result = longRestEvent(db, characterId);
-        if (result.success) { logAction(actor || 'System', result.logMessage); broadcastPartyState(); }
+        if (result.success) { 
+            logAction(actor || 'System', result.logMessage); 
+            broadcastPartyState();
+            // Advance time +8hr
+            socket.emit('advance_time', { minutes: 480 });
+        }
+    });
+
+    socket.on('advance_time', ({ minutes }) => {
+        // Logic handled in Rest API but for socket we can call it
+        // Or just re-broadcast world state after an API call
+        broadcastWorldState();
     });
 
     socket.on('update_character', ({ characterId, updates, actor }) => {
@@ -477,6 +526,10 @@ io.on('connection', (socket) => {
     socket.on('delete_note', ({ noteId }) => {
         db.prepare('DELETE FROM party_notes WHERE id = ?').run(noteId);
         broadcastNotes();
+    });
+
+    socket.on('refresh_quests_global', () => {
+        io.emit('refresh_quests');
     });
 
     socket.on('register_player', ({ characterId, playerName }) => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import socket from './socket';
+import PartyDashboard from './components/PartyDashboard';
 import ActionLog from './components/ActionLog';
 import DndBeyondImporter from './components/DndBeyondImporter';
 import RulesAssistant from './components/RulesAssistant';
@@ -7,14 +8,18 @@ import SessionRecap from './components/SessionRecap';
 import PartyNotes from './components/PartyNotes';
 import DmWhisperPanel from './components/DmWhisperPanel';
 import HomebrewCreator from './components/HomebrewCreator';
+import CharacterSheetModal from './components/CharacterSheetModal';
+import Compendium from './components/Compendium';
 import PartySidebar from './components/PartySidebar';
 import CharacterSheetView from './components/CharacterSheetView';
-import Compendium from './components/Compendium';
 import DmDashboard from './components/DmDashboard';
 import DiceRoller from './components/DiceRoller';
 import MapViewer from './components/MapViewer';
 import SessionEndModal from './components/SessionEndModal';
 import SoundReceiver from './components/SoundReceiver';
+import QuestTracker from './components/QuestTracker';
+import AtmosphereOverlay from './components/AtmosphereOverlay';
+import RecapArchive from './components/RecapArchive';
 
 // ── New components from rules engine phase ───────────────────────────────────
 import InitiativeTracker from './components/InitiativeTracker';
@@ -55,6 +60,7 @@ function normaliseTrackerEntity(raw) {
 const TABS = [
   { id: 'party', label: '🛡️ Party' },
   { id: 'map', label: '🗺️ Map' },
+  { id: 'quests', label: '📜 Quests' },
   { id: 'initiative', label: '⚔ Initiative' },
   { id: 'campaign', label: '📜 Campaign' },
   { id: 'notes', label: '📋 Notes' },
@@ -72,6 +78,7 @@ function App() {
   const [isApprovalMode, setIsApprovalMode] = useState(false);
   const [showHomebrewCreator, setShowHomebrewCreator] = useState(false);
   const [showCompendium, setShowCompendium] = useState(false);
+  const [showRecapArchive, setShowRecapArchive] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState(null);
   const [currentRecap, setCurrentRecap] = useState(null);
   const [isDm, setIsDm] = useState(false);
@@ -129,15 +136,26 @@ function App() {
     setRoundNumber(1);
   }
 
-  function toggleDm() {
+  async function toggleDm() {
     if (isDm) {
       setIsDm(false);
     } else {
       const pin = prompt("Enter Master PIN:");
-      if (pin === "1234") {
-        setIsDm(true);
-      } else {
-        alert("Invalid Key.");
+      if (!pin) return;
+
+      try {
+        const res = await fetch('/api/auth/dm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin })
+        });
+        if (res.ok) {
+          setIsDm(true);
+        } else {
+          alert("Invalid Key.");
+        }
+      } catch (err) {
+        alert("Auth server unreachable.");
       }
     }
   }
@@ -149,7 +167,10 @@ function App() {
         return <CharacterSheetView character={selectedCharacter} />;
 
       case 'map':
-        return <MapViewer isGm={isDm} />;
+        return <MapViewer isGm={isDm} party={party} />;
+
+      case 'quests':
+        return <QuestTracker isDm={isDm} />;
 
       case 'initiative':
         return (
@@ -177,70 +198,32 @@ function App() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <SoundReceiver />
-      <header style={{
-        padding: '0.75rem 1.5rem',
-        background: 'var(--dnd-surface)',
-        borderBottom: '1px solid var(--dnd-border)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexShrink: 0,
-        zIndex: 100,
-        position: 'relative'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <AtmosphereOverlay />
+      <header className="p-3 bg-dnd-surface border-b border-dnd-border flex justify-between items-center shrink-0 z-50 relative">
+        <div className="flex items-center gap-3">
           <h1
-            className="fantasy-heading cursor-help select-none"
-            style={{ fontSize: '1.2rem', margin: 0 }}
+            className="fantasy-heading cursor-help select-none text-xl m-0"
             onClick={toggleDm}
           >
-            🐉 Party Sync {isDm && <span className="text-dnd-gold text-xs ml-1">[DM]</span>}
+            🐉 DnD Party Sync {isDm && <span className="text-dnd-gold text-xs ml-2">[DM]</span>}
           </h1>
-          <div style={{
-            width: '8px', height: '8px', borderRadius: '50%',
-            background: isConnected ? 'var(--dnd-green)' : 'var(--dnd-red)',
-            boxShadow: `0 0 6px ${isConnected ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'}`,
-          }} title={isConnected ? 'Connected' : 'Disconnected'} />
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-dnd-green shadow-[0_0_6px_rgba(34,197,94,0.5)]' : 'bg-dnd-red shadow-[0_0_6px_rgba(239,68,68,0.5)]'}`} title={isConnected ? 'Connected' : 'Disconnected'} />
         </div>
 
-        {/* Desktop Actions */}
-        <div className="hidden md:flex items-center gap-3">
-          <button
-            className="btn-secondary"
-            onClick={() => setShowCompendium(true)}
-            style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-          >
-            📜 Compendium
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={() => setShowHomebrewCreator(true)}
-            style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
-          >
-            🔮 Creator
-          </button>
+        <div className="hidden md:flex items-center gap-2">
+          <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowRecapArchive(true)}>📜 Chronicles</button>
+          <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowCompendium(true)}>📦 Compendium</button>
+          <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowHomebrewCreator(true)}>🔮 Creator</button>
           {isDm && (
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              cursor: 'pointer', fontSize: '0.8rem', color: 'var(--dnd-gold)',
-            }}>
-              <input
-                type="checkbox"
-                checked={isApprovalMode}
-                onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)}
-                style={{ accentColor: 'var(--dnd-gold)' }}
-              />
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-dnd-gold ml-2">
+              <input type="checkbox" checked={isApprovalMode} onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)} className="accent-dnd-gold" />
               DM Queue
             </label>
           )}
         </div>
 
         {/* Mobile Menu Toggle */}
-        <button
-          className="md:hidden btn-ghost text-xl"
-          onClick={() => setIsMenuOpen(!isMenuOpen)}
-        >
+        <button className="md:hidden btn-ghost text-xl text-white" onClick={() => setIsMenuOpen(!isMenuOpen)}>
           {isMenuOpen ? '✕' : '☰'}
         </button>
 
@@ -261,27 +244,13 @@ function App() {
             </div>
             <div className="flex flex-col gap-2 pt-2 border-t border-dnd-border">
               <span className="text-[10px] text-dnd-muted font-bold uppercase tracking-widest pl-2">Tools</span>
-              <button
-                className="btn-secondary w-full justify-start py-3"
-                onClick={() => { setShowCompendium(true); setIsMenuOpen(false); }}
-              >
-                📜 Compendium
-              </button>
-              <button
-                className="btn-secondary w-full justify-start py-3"
-                onClick={() => { setShowHomebrewCreator(true); setIsMenuOpen(false); }}
-              >
-                🔮 Creator
-              </button>
+              <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowRecapArchive(true); setIsMenuOpen(false); }}>📜 Chronicles</button>
+              <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowCompendium(true); setIsMenuOpen(false); }}>📦 Compendium</button>
+              <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowHomebrewCreator(true); setIsMenuOpen(false); }}>🔮 Creator</button>
               {isDm && (
                 <div className="px-4 py-2 bg-dnd-navy rounded-lg border border-dnd-border">
                   <label className="flex items-center gap-3 cursor-pointer text-sm text-dnd-gold">
-                    <input
-                      type="checkbox"
-                      checked={isApprovalMode}
-                      onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)}
-                      style={{ accentColor: 'var(--dnd-gold)' }}
-                    />
+                    <input type="checkbox" checked={isApprovalMode} onChange={(e) => socket.emit('toggle_approval_mode', e.target.checked)} className="accent-dnd-gold" />
                     DM Approval Queue
                   </label>
                 </div>
@@ -329,12 +298,12 @@ function App() {
             </aside>
 
             {/* Center Pane: Dynamic Content (Character Sheet, Map, Initiative) */}
-            <main className="flex-1 overflow-y-auto bg-gray-900 custom-scrollbar border-r border-dnd-border relative">
+            <main className="flex-1 overflow-y-auto bg-gray-900 custom-scrollbar relative">
               {renderTabContent()}
             </main>
 
             {/* Right Pane: Dice & Log */}
-            <aside className="h-[40vh] lg:h-full flex flex-col overflow-hidden bg-dnd-surface shrink-0">
+            <aside className="h-[40vh] lg:h-full flex flex-col overflow-hidden bg-dnd-surface border-l border-dnd-border shrink-0">
               <div className="p-3 border-b border-dnd-border shrink-0 bg-gray-950">
                 <DiceRoller characterName={selectedCharacter ? selectedCharacter.name : "Player"} />
               </div>
@@ -345,13 +314,14 @@ function App() {
                 <DndBeyondImporter />
               </div>
             </aside>
-
           </div>
         </>
       )}
 
       <RulesAssistant />
       <DmWhisperPanel party={party} />
+
+      <SoundReceiver />
 
       <ConcentrationAlert
         socket={socket}
@@ -364,6 +334,17 @@ function App() {
 
       {showCompendium && (
         <Compendium party={party} onClose={() => setShowCompendium(false)} />
+      )}
+
+      {showRecapArchive && (
+        <RecapArchive onClose={() => setShowRecapArchive(false)} />
+      )}
+
+      {selectedCharacter && isDm && (
+        <CharacterSheetModal
+          character={selectedCharacter}
+          onClose={() => setSelectedCharacter(null)}
+        />
       )}
 
       {currentRecap && (

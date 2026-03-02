@@ -131,6 +131,16 @@ const BUFF_EFFECTS = {
     description: '-1d4 to attack rolls and saving throws.',
     attackBonusRoll: '-1d4',
     saveBonusRoll: '-1d4',
+  },
+  'rage': {
+    description: 'Resistance to bludgeoning, piercing, and slashing damage. Advantage on STR checks/saves.',
+    saveAdvantage: ['STR'],
+    damageResistance: ['bludgeoning', 'piercing', 'slashing']
+  },
+  'slow': {
+    description: '-2 AC, -2 to DEX saves, speed halved, limited actions.',
+    acBonus: -2,
+    savePenalty: ['DEX', -2]
   }
 };
 
