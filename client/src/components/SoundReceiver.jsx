@@ -41,7 +41,7 @@ export default function SoundReceiver() {
         <>
             <audio ref={audioRef} style={{ display: 'none' }} />
             {!unmuted && (
-                <div className="fixed bottom-4 right-4 lg:right-[390px] z-[200] animate-bounce transition-all">
+                <div className="fixed bottom-[160px] lg:bottom-4 right-4 lg:right-[390px] z-[200] animate-bounce transition-all">
                     <button
                         onClick={handleEnable}
                         className="bg-dnd-gold text-dnd-navy px-4 py-2 rounded-full font-bold text-xs shadow-2xl flex items-center gap-2 border-2 border-white/20 hover:scale-105"
@@ -51,7 +51,7 @@ export default function SoundReceiver() {
                 </div>
             )}
             {unmuted && currentSound && (
-                <div className="fixed bottom-4 right-4 lg:right-[390px] z-[200] opacity-50 hover:opacity-100 transition-all">
+                <div className="fixed bottom-[160px] lg:bottom-4 right-4 lg:right-[390px] z-[200] opacity-50 hover:opacity-100 transition-all">
                     <div className="bg-dnd-navy/80 border border-dnd-gold text-dnd-gold px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2">
                         <span className="relative flex h-2 w-2">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dnd-gold opacity-75"></span>

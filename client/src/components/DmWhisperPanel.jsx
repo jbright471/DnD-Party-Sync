@@ -121,13 +121,13 @@ export default function DmWhisperPanel({ party }) {
             {!isOpen ? (
                 <button
                     onClick={() => setIsOpen(true)}
-                    className="fixed bottom-4 right-4 lg:right-[320px] w-14 h-14 rounded-full bg-dnd-surface border-2 border-dnd-purple text-dnd-purple text-2xl cursor-pointer shadow-[0_4px_12px_rgba(168,85,247,0.3)] flex items-center justify-center z-[100] transition-all hover:scale-110"
+                    className="fixed bottom-[220px] lg:bottom-4 right-4 lg:right-[320px] w-14 h-14 rounded-full bg-dnd-surface border-2 border-dnd-purple text-dnd-purple text-2xl cursor-pointer shadow-[0_4px_12px_rgba(168,85,247,0.3)] flex items-center justify-center z-[100] transition-all hover:scale-110"
                     title="DM Whispers & Blind Rolls"
                 >
                     🤫
                 </button>
             ) : (
-                <div className="fixed bottom-20 right-4 lg:right-[320px] w-[350px] h-[480px] bg-dnd-navy border border-dnd-purple rounded-xl shadow-[0_8px_24px_rgba(168,85,247,0.3)] flex flex-col z-[100] overflow-hidden">
+                <div className="fixed bottom-[280px] lg:bottom-20 right-4 lg:right-[320px] w-[350px] h-[480px] bg-dnd-navy border border-dnd-purple rounded-xl shadow-[0_8px_24px_rgba(168,85,247,0.3)] flex flex-col z-[100] overflow-hidden">
                     {/* Header */}
                     <div style={{
                         background: 'var(--dnd-surface)', padding: '0.75rem',

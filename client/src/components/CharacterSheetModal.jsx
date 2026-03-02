@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import socket from '../socket';
+import CombatActions from './CombatActions';
 
 const SKILL_MAP = {
     'Acrobatics': 'DEX', 'Animal Handling': 'WIS', 'Arcana': 'INT', 'Athletics': 'STR',
@@ -74,7 +75,7 @@ const SpellItem = ({ spell, character, onCast }) => {
 };
 
 export default function CharacterSheetModal({ character, onClose }) {
-    const [activeTab, setActiveTab] = useState('inventory');
+    const [activeTab, setActiveTab] = useState('combat');
     const [isSyncing, setIsSyncing] = useState(false);
     const [isParsing, setIsParsing] = useState(null);
 
@@ -250,8 +251,9 @@ export default function CharacterSheetModal({ character, onClose }) {
                     {/* Right Column: Tabbed Content (Spells, Inventory, etc.) */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-dnd-surface2/30">
                         {/* Tab Navigation */}
-                        <div className="flex bg-dnd-navy border-b border-dnd-border px-4">
+                        <div className="flex bg-dnd-navy border-b border-dnd-border px-4 overflow-x-auto custom-scrollbar">
                             {[
+                                { id: 'combat', label: '⚔️ Combat' },
                                 { id: 'inventory', label: '🎒 Inventory' },
                                 { id: 'spells', label: '🪄 Spells' },
                                 { id: 'features', label: '✨ Features' },
@@ -260,7 +262,7 @@ export default function CharacterSheetModal({ character, onClose }) {
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 ${
+                                    className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 whitespace-nowrap ${
                                         activeTab === tab.id ? 'text-dnd-gold border-dnd-gold bg-dnd-surface/50' : 'text-dnd-muted border-transparent hover:text-white'
                                     }`}
                                 >{tab.label}</button>
@@ -270,6 +272,11 @@ export default function CharacterSheetModal({ character, onClose }) {
                         {/* Tab Content Area */}
                         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
                             
+                            {/* COMBAT TAB */}
+                            {activeTab === 'combat' && (
+                                <CombatActions character={character} />
+                            )}
+
                             {/* INVENTORY TAB */}
                             {activeTab === 'inventory' && (
                                 <div className="flex flex-col gap-6">

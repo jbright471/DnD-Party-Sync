@@ -43,7 +43,7 @@ export default function RulesAssistant() {
         return (
             <button
                 onClick={() => setIsOpen(true)}
-                className="fixed bottom-4 left-4 lg:left-[270px] w-14 h-14 rounded-full bg-dnd-surface border-2 border-dnd-gold text-dnd-gold text-2xl cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] flex items-center justify-center z-[100] transition-all hover:scale-110"
+                className="fixed bottom-[85px] lg:bottom-4 left-4 lg:left-[270px] w-14 h-14 rounded-full bg-dnd-surface border-2 border-dnd-gold text-dnd-gold text-2xl cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] flex items-center justify-center z-[100] transition-all hover:scale-110"
                 title="Ask the D&D Rules Assistant"
             >
                 🧙‍♂️
@@ -52,7 +52,7 @@ export default function RulesAssistant() {
     }
 
     return (
-        <div className="fixed bottom-20 left-4 lg:left-[270px] w-[350px] h-[500px] bg-dnd-navy border border-dnd-border rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.7)] flex flex-col z-[100] overflow-hidden">
+        <div className="fixed bottom-[150px] lg:bottom-20 left-4 lg:left-[270px] w-[350px] h-[500px] bg-dnd-navy border border-dnd-border rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.7)] flex flex-col z-[100] overflow-hidden">
             {/* Header */}
             <div style={{
                 background: 'var(--dnd-surface)',
