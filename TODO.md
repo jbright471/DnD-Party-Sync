@@ -15,6 +15,8 @@ A living document for the *DnD Party Sync* project, outlining upcoming features,
 
 ## ✅ Completed
 
+- [x] **Phase 8.2: Mobile-Optimized Combat**: Introduced Stitch-inspired mobile bottom tabs, persistent dice FAB, and animated premium Action Cards for combat.
+- [x] **Phase 8.1: Three-Pane Dashboard**: Refactored the core UI into a highly dense, non-scrolling 3-column desktop layout with persistent dice/logs.
 - [x] **Phase 7.0: Map & VTT**: Shared battlemaps, grid-snapping, and persistent tokens.
 - [x] **Phase 7.1: Interactive Rolls**: Click-to-roll stats/skills with DDB-style UI indicators and advantage logic.
 - [x] **Phase 7.5: Atmospheric Systems**: Synchronized Soundboard and Dynamic Multi-Buff console.
