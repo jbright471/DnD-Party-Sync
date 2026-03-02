@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import socket from './socket';
-import PartyDashboard from './components/PartyDashboard';
 import ActionLog from './components/ActionLog';
 import DndBeyondImporter from './components/DndBeyondImporter';
 import RulesAssistant from './components/RulesAssistant';
@@ -8,7 +7,8 @@ import SessionRecap from './components/SessionRecap';
 import PartyNotes from './components/PartyNotes';
 import DmWhisperPanel from './components/DmWhisperPanel';
 import HomebrewCreator from './components/HomebrewCreator';
-import CharacterSheetModal from './components/CharacterSheetModal';
+import PartySidebar from './components/PartySidebar';
+import CharacterSheetView from './components/CharacterSheetView';
 import Compendium from './components/Compendium';
 import DmDashboard from './components/DmDashboard';
 import DiceRoller from './components/DiceRoller';
@@ -146,21 +146,14 @@ function App() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'party':
-        return (
-          <PartyDashboard
-            party={party}
-            prevHpMap={prevHpMapRef.current}
-            onAddClick={() => {/* trigger importer */ }}
-            onCharacterClick={(char) => setSelectedCharacter(char)}
-          />
-        );
+        return <CharacterSheetView character={selectedCharacter} />;
 
       case 'map':
         return <MapViewer isGm={isDm} />;
 
       case 'initiative':
         return (
-          <div style={{ maxWidth: 500 }}>
+          <div className="max-w-[500px] mx-auto p-4">
             <InitiativeTracker
               entities={tracker}
               roundNumber={roundNumber}
@@ -172,10 +165,10 @@ function App() {
         );
 
       case 'campaign':
-        return <SessionRecap />;
+        return <div className="p-4"><SessionRecap /></div>;
 
       case 'notes':
-        return <PartyNotes notes={notes} />;
+        return <div className="p-4"><PartyNotes notes={notes} /></div>;
 
       default:
         return null;
@@ -311,11 +304,11 @@ function App() {
         </main>
       ) : (
         <>
-          <nav className="tab-nav hidden md:flex" style={{ flexShrink: 0 }}>
+          <nav className="tab-nav hidden md:flex shrink-0 bg-dnd-surface border-b border-dnd-border px-4 py-2 gap-2 overflow-x-auto">
             {TABS.map(tab => (
               <button
                 key={tab.id}
-                className={`tab-btn ${activeTab === tab.id ? 'tab-active' : ''}`}
+                className={`px-4 py-1.5 rounded-full text-sm font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-dnd-gold text-dnd-navy' : 'text-dnd-muted hover:text-white hover:bg-white/10'}`}
                 onClick={() => setActiveTab(tab.id)}
               >
                 {tab.label}
@@ -323,32 +316,36 @@ function App() {
             ))}
           </nav>
 
-          <div className="app-main-grid" style={{
-            flex: 1,
-            display: 'grid',
-            gridTemplateColumns: '1fr 380px',
-            overflow: 'hidden',
-          }}>
-            <main style={{ padding: '1.25rem 1.5rem', overflowY: 'auto' }}>
+          <div className="flex-1 flex flex-col lg:grid lg:grid-cols-[250px_minmax(0,1fr)_300px] overflow-hidden">
+
+            {/* Left Pane: Party Tracker */}
+            <aside className="hidden lg:flex flex-col h-full bg-gray-900 border-r border-dnd-border">
+              <PartySidebar
+                party={party}
+                selectedCharacterId={selectedCharacter?.id}
+                onCharacterClick={(char) => { setSelectedCharacter(char); setActiveTab('party'); }}
+                prevHpMap={prevHpMapRef.current}
+              />
+            </aside>
+
+            {/* Center Pane: Dynamic Content (Character Sheet, Map, Initiative) */}
+            <main className="flex-1 overflow-y-auto bg-gray-900 custom-scrollbar border-r border-dnd-border relative">
               {renderTabContent()}
             </main>
 
-            <aside className="app-sidebar" style={{
-              borderLeft: '1px solid var(--dnd-border)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}>
-              <div style={{ padding: '1rem', borderBottom: '1px solid var(--dnd-border)' }}>
-                <DiceRoller characterName="Player" />
+            {/* Right Pane: Dice & Log */}
+            <aside className="h-[40vh] lg:h-full flex flex-col overflow-hidden bg-dnd-surface shrink-0">
+              <div className="p-3 border-b border-dnd-border shrink-0 bg-gray-950">
+                <DiceRoller characterName={selectedCharacter ? selectedCharacter.name : "Player"} />
               </div>
-              <div style={{ flex: 1, overflowY: 'auto' }}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
                 <ActionLog logs={logs} party={party} approvalMode={isApprovalMode} />
               </div>
-              <div style={{ borderTop: '1px solid var(--dnd-border)', padding: '1rem' }}>
+              <div className="p-4 border-t border-dnd-border shrink-0 bg-gray-950">
                 <DndBeyondImporter />
               </div>
             </aside>
+
           </div>
         </>
       )}
@@ -367,13 +364,6 @@ function App() {
 
       {showCompendium && (
         <Compendium party={party} onClose={() => setShowCompendium(false)} />
-      )}
-
-      {selectedCharacter && (
-        <CharacterSheetModal
-          character={selectedCharacter}
-          onClose={() => setSelectedCharacter(null)}
-        />
       )}
 
       {currentRecap && (
