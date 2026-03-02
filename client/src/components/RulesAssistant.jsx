@@ -43,24 +43,7 @@ export default function RulesAssistant() {
         return (
             <button
                 onClick={() => setIsOpen(true)}
-                style={{
-                    position: 'fixed',
-                    bottom: '20px',
-                    left: '20px',
-                    width: '56px',
-                    height: '56px',
-                    borderRadius: '50%',
-                    background: 'var(--dnd-surface)',
-                    border: '2px solid var(--dnd-gold)',
-                    color: 'var(--dnd-gold)',
-                    fontSize: '1.5rem',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 100
-                }}
+                className="fixed bottom-4 left-4 lg:left-[270px] w-14 h-14 rounded-full bg-dnd-surface border-2 border-dnd-gold text-dnd-gold text-2xl cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] flex items-center justify-center z-[100] transition-all hover:scale-110"
                 title="Ask the D&D Rules Assistant"
             >
                 🧙‍♂️
@@ -69,21 +52,7 @@ export default function RulesAssistant() {
     }
 
     return (
-        <div style={{
-            position: 'fixed',
-            bottom: '20px',
-            left: '20px',
-            width: '350px',
-            height: '500px',
-            background: 'var(--dnd-navy)',
-            border: '1px solid var(--dnd-border)',
-            borderRadius: '12px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-            display: 'flex',
-            flexDirection: 'column',
-            zIndex: 100,
-            overflow: 'hidden'
-        }}>
+        <div className="fixed bottom-20 left-4 lg:left-[270px] w-[350px] h-[500px] bg-dnd-navy border border-dnd-border rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.7)] flex flex-col z-[100] overflow-hidden">
             {/* Header */}
             <div style={{
                 background: 'var(--dnd-surface)',
