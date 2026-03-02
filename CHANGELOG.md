@@ -4,6 +4,24 @@ All notable changes to the **DnD Party Sync** project will be documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.5.0] - 2026-03-01
+
+### Added
+- **🗺️ Virtual Tabletop (VTT)**: High-performance shared battlemap system with grid-snapping, draggable tokens, and persistent positioning.
+- **🧭 Map Cartographer**: Dedicated UI for the DM to upload maps (Base64) and manage a library of active battlefields.
+- **🎵 Synchronized Soundboard**: Real-time atmospheric audio loops (Rain, Dungeon, Tavern) that play for all party members simultaneously.
+- **✨ Dynamic Multi-Buff System**: DM Enchantment Console to apply standardized 5e buffs (Bless, Haste, Shield of Faith) to multiple targets with automated stat recalculation.
+- **🎬 Cinematic Session Finale**: "End Session" now triggers a party-wide modal showing a vivid, AI-generated narrative recap of the night's highlights.
+- **ℹ️ Condition Intelligence**: Interactive hover tooltips on Character Sheets explaining the mechanical impact of all active conditions.
+
+### Changed
+- **🖥️ DM Dashboard 2.0**: Reorganized three-pane layout for optimized desktop control of combat, lore, and atmosphere.
+- **🏹 Advanced Combat Tracking**: Enhanced "HP Ghosting" and Fog-of-War for both Initiative and Map views.
+
+### Fixed
+- **🧠 Rules Precision**: Refined AC and Modifier calculations to handle complex overlapping buffs like Mage Armor and Haste.
+- **🔌 Socket State Stability**: Improved synchronization logic for token movement and shared audio playback.
+
 ## [1.4.0] - 2026-03-01
 
 ### Added

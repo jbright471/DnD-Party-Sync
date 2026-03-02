@@ -143,6 +143,30 @@ function runMigrations() {
     );
   `);
 
+  // ---- Phase 7: Map & VTT ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maps (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      image_data  TEXT, -- Base64 or local path
+      grid_size   INTEGER DEFAULT 50,
+      is_active   INTEGER DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS map_tokens (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      map_id       INTEGER NOT NULL,
+      entity_id    TEXT NOT NULL, -- Links to character_id or instance_id
+      entity_name  TEXT,
+      entity_type  TEXT DEFAULT 'pc',
+      x            INTEGER DEFAULT 0,
+      y            INTEGER DEFAULT 0,
+      is_hidden    INTEGER DEFAULT 0,
+      FOREIGN KEY (map_id) REFERENCES maps(id) ON DELETE CASCADE
+    );
+  `);
+
   console.log('[DB] Migrations complete.');
 }
 

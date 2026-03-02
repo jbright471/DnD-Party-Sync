@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import socket from '../socket';
 
 const DICE_TYPES = [
-    { type: 'd4',   color: 'text-red-400' },
-    { type: 'd6',   color: 'text-orange-400' },
-    { type: 'd8',   color: 'text-yellow-400' },
-    { type: 'd10',  color: 'text-green-400' },
-    { type: 'd12',  color: 'text-blue-400' },
-    { type: 'd20',  color: 'text-purple-400' },
+    { type: 'd4', color: 'text-red-400' },
+    { type: 'd6', color: 'text-orange-400' },
+    { type: 'd8', color: 'text-yellow-400' },
+    { type: 'd10', color: 'text-green-400' },
+    { type: 'd12', color: 'text-blue-400' },
+    { type: 'd20', color: 'text-purple-400' },
     { type: 'd100', color: 'text-pink-400' }
 ];
 
@@ -61,21 +61,21 @@ export default function DiceRoller({ characterName, isDm }) {
     };
 
     return (
-        <div className="bg-dnd-surface border border-dnd-border rounded-lg shadow-2xl p-4 flex flex-col gap-4 select-none">
+        <div className="bg-dnd-surface border-fantasy rounded-xl shadow-2xl p-5 flex flex-col gap-4 select-none animate-in fade-in duration-300">
             <div className="flex justify-between items-center border-b border-dnd-border pb-2">
                 <h4 className="fantasy-heading text-sm text-dnd-gold m-0">🎲 Dice Tray</h4>
                 <div className="flex gap-2 items-center">
-                    <input 
-                        type="number" 
-                        value={count} 
+                    <input
+                        type="number"
+                        value={count}
                         onChange={e => setCount(Math.max(1, parseInt(e.target.value) || 1))}
                         className="w-10 bg-dnd-navy border border-dnd-border rounded text-center text-xs py-1 text-white outline-none focus:border-dnd-gold"
                         title="Dice Count"
                     />
                     <span className="text-dnd-muted text-[10px] font-bold">D</span>
-                    <input 
-                        type="number" 
-                        value={modifier} 
+                    <input
+                        type="number"
+                        value={modifier}
                         onChange={e => setModifier(parseInt(e.target.value) || 0)}
                         className="w-10 bg-dnd-navy border border-dnd-border rounded text-center text-xs py-1 text-white outline-none focus:border-dnd-gold"
                         title="Modifier"
@@ -97,7 +97,7 @@ export default function DiceRoller({ characterName, isDm }) {
                         </div>
                     </button>
                 ))}
-                <button 
+                <button
                     onClick={() => { setCount(1); setModifier(0); setLastRoll(null); setHistory([]); }}
                     className="bg-dnd-red/10 border border-dnd-red/30 text-dnd-red text-[8px] font-bold uppercase rounded hover:bg-dnd-red/20"
                 >Clear</button>

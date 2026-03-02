@@ -8,6 +8,7 @@ const { runMigrations } = require('./schema');
 const { router: characterRouter, getAllCharacters } = require('./routes/characters');
 const importerRouter = require('./routes/importer');
 const { router: initiativeRouter, startEncounter, getTrackerState, advanceTurn, endEncounter, resortTracker, spawnMonster } = require('./routes/initiative');
+const mapsRouter = require('./routes/maps');
 const notesRouter = require('./routes/notes');
 const homebrewRouter = require('./routes/homebrew');
 const db = require('./db');
@@ -28,7 +29,9 @@ const {
     longRestEvent,
     getResolvedCharacterState,
     getSessionState,
-    saveSessionState
+    saveSessionState,
+    applyBuffEvent,
+    removeBuffEvent
 } = require('./lib/rulesIntegration');
 
 function applyEffect(effect) {
@@ -86,6 +89,7 @@ app.use('/api/characters', characterRouter);
 app.use('/api/characters/import', importerRouter);
 app.use('/api/encounters', initiativeRouter);
 app.use('/api/initiative', initiativeRouter);
+app.use('/api/maps', mapsRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/homebrew', homebrewRouter);
 
@@ -168,6 +172,16 @@ function broadcastNotes() {
     io.emit('notes_state', notes);
 }
 
+function broadcastMapState() {
+    const map = db.prepare('SELECT * FROM maps WHERE is_active = 1').get();
+    if (map) {
+        const tokens = db.prepare('SELECT * FROM map_tokens WHERE map_id = ?').all(map.id);
+        io.emit('map_state', { ...map, tokens });
+    } else {
+        io.emit('map_state', null);
+    }
+}
+
 function logAction(actor, description, status = 'applied', effectsJson = null) {
     db.prepare(
         "INSERT INTO action_log (timestamp, actor, action_description, status, effects_json) VALUES (datetime('now'), ?, ?, ?, ?)"
@@ -183,6 +197,7 @@ io.on('connection', (socket) => {
     broadcastLogs();
     broadcastInitiative();
     broadcastNotes();
+    broadcastMapState();
     socket.emit('approval_mode', isApprovalMode);
 
     socket.on('log_action', async ({ actor, description, useLlm }, callback) => {
@@ -291,6 +306,20 @@ io.on('connection', (socket) => {
         if (result.success) { logAction(actor || 'System', result.logMessage); broadcastPartyState(); }
     });
 
+    socket.on('apply_buff', ({ characterIds, buffData, actor }) => {
+        const ids = Array.isArray(characterIds) ? characterIds : [characterIds];
+        ids.forEach(id => {
+            const result = applyBuffEvent(db, id, buffData);
+            if (result.success) logAction(actor || 'System', result.logMessage);
+        });
+        broadcastPartyState();
+    });
+
+    socket.on('remove_buff', ({ characterId, buffId, actor }) => {
+        const result = removeBuffEvent(db, characterId, buffId);
+        if (result.success) { logAction(actor || 'System', result.logMessage); broadcastPartyState(); }
+    });
+
     socket.on('use_spell_slot', ({ characterId, slotLevel, actor }) => {
         const result = useSpellSlotEvent(db, characterId, slotLevel);
         if (result.success) { logAction(actor || 'System', result.logMessage); broadcastPartyState(); }
@@ -358,9 +387,7 @@ io.on('connection', (socket) => {
         const rollString = `${count}d${sides}${modifier !== 0 ? (modifier > 0 ? '+' + modifier : modifier) : ''}`;
         const detailString = rolls.length > 1 ? ` (${rolls.join(' + ')})` : '';
         const msg = `rolled ${total} on ${rollString}${detailString}`;
-        
         logAction(actor || 'Someone', msg);
-        // If we want private rolls later, we'd use io.to(dmSocketId).emit(...)
     });
 
     socket.on('spawn_monster', (monsterData) => {
@@ -375,6 +402,35 @@ io.on('connection', (socket) => {
             db.prepare('UPDATE initiative_tracker SET is_hidden = ? WHERE id = ?').run(entity.is_hidden ? 0 : 1, entityId);
             broadcastInitiative();
         }
+    });
+
+    socket.on('play_sound', ({ soundName, url, action }) => {
+        io.emit('sound_event', { soundName, url, action });
+        logAction('DM', `${action === 'play' ? 'Started' : 'Stopped'} atmospheric sound: ${soundName}`);
+    });
+
+    socket.on('activate_map', ({ mapId }) => {
+        db.prepare('UPDATE maps SET is_active = 0').run();
+        db.prepare('UPDATE maps SET is_active = 1 WHERE id = ?').run(mapId);
+        broadcastMapState();
+    });
+
+    socket.on('move_token', ({ tokenId, x, y }) => {
+        db.prepare('UPDATE map_tokens SET x = ?, y = ? WHERE id = ?').run(x, y, tokenId);
+        broadcastMapState();
+    });
+
+    socket.on('sync_map_tokens', () => {
+        const activeMap = db.prepare('SELECT id FROM maps WHERE is_active = 1').get();
+        if (!activeMap) return;
+        const tracker = getTrackerState();
+        const currentTokens = db.prepare('SELECT entity_id FROM map_tokens WHERE map_id = ?').all(activeMap.id).map(t => t.entity_id);
+        const insertStmt = db.prepare(`INSERT INTO map_tokens (map_id, entity_id, entity_name, entity_type, x, y) VALUES (?, ?, ?, ?, 0, 0)`);
+        for (const ent of tracker) {
+            const id = ent.character_id ? `pc-${ent.character_id}` : `m-${ent.instance_id}`;
+            if (!currentTokens.includes(id)) insertStmt.run(activeMap.id, id, ent.entity_name, ent.entity_type);
+        }
+        broadcastMapState();
     });
 
     socket.on('start_encounter', ({ encounterId }) => {

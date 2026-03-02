@@ -121,17 +121,14 @@ export function CharacterCard({ character, isPlayer = false, prevHp = null }) {
   const slotLevels = Object.keys(spellSlotsMax).sort();
 
   return (
-    <div style={{
-      position: 'relative',
-      background: isDowned ? '#1a0505' : '#0d1117',
-      border: `1px solid ${isDowned ? '#7f1d1d' : concentratingOn ? '#f59e0b44' : '#1e2d3d'}`,
-      clipPath: 'polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))',
-      padding: '16px 18px',
-      fontFamily: "'Rajdhani', sans-serif",
-      minWidth: 280,
-      transition: 'border-color 0.3s, background 0.3s',
-      opacity: isDowned ? 0.85 : 1,
-    }}>
+    <div
+      className={`char-card border-fantasy !p-4 !min-w-[280px] transition-all duration-300 ${isDowned ? 'grayscale-[0.5] brightness-[0.7]' : ''}`}
+      style={{
+        background: isDowned ? '#1a0505' : 'var(--dnd-navy)',
+        border: `1px solid ${isDowned ? '#7f1d1d' : concentratingOn ? 'var(--dnd-gold)' : 'var(--dnd-border)'}`,
+        opacity: isDowned ? 0.85 : 1,
+      }}
+    >
       {/* Corner accent — top right */}
       <div style={{
         position: 'absolute', top: 0, right: 0,

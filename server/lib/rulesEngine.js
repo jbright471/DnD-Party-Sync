@@ -11,17 +11,13 @@
 // CONSTANTS
 // ---------------------------------------------------------------------------
 
-// 5e damage types that can have resistance/immunity/vulnerability
 const DAMAGE_TYPES = [
   'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
   'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing',
   'thunder',
-  // Special: "magical bludgeoning/piercing/slashing" treated separately
   'magical bludgeoning', 'magical piercing', 'magical slashing',
 ];
 
-// All 5e conditions and their mechanical effects on derived stats
-// Used by resolveConditionModifiers()
 const CONDITION_EFFECTS = {
   blinded: {
     description: 'Attacks against you have advantage. Your attacks have disadvantage.',
@@ -116,7 +112,28 @@ const CONDITION_EFFECTS = {
   },
 };
 
-// All spells that require concentration — used to enforce the concentration rule
+const BUFF_EFFECTS = {
+  'bless': {
+    description: '+1d4 to attack rolls and saving throws.',
+    attackBonusRoll: '1d4',
+    saveBonusRoll: '1d4',
+  },
+  'haste': {
+    description: '+2 AC, advantage on DEX saves, additional action.',
+    acBonus: 2,
+    saveAdvantage: ['DEX'],
+  },
+  'shield of faith': {
+    description: '+2 AC.',
+    acBonus: 2,
+  },
+  'bane': {
+    description: '-1d4 to attack rolls and saving throws.',
+    attackBonusRoll: '-1d4',
+    saveBonusRoll: '-1d4',
+  }
+};
+
 const KNOWN_CONCENTRATION_SPELLS = new Set([
   "bless", "bane", "faerie fire", "hunters mark", "hunter's mark",
   "hex", "hypnotic pattern", "hold person", "hold monster",
@@ -132,7 +149,7 @@ const KNOWN_CONCENTRATION_SPELLS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// HP RESOLUTION
+// LOGIC
 // ---------------------------------------------------------------------------
 
 function resolveDamage(currentState, rawDamage, damageType = 'untyped', resistances = [], immunities = [], vulnerabilities = [], activeConditions = []) {
@@ -190,14 +207,10 @@ function resolveDeathSave(current, isSuccess, isCriticalFail = false, isCritical
   return { successes, failures, stabilized: false, died: false, nat20: false };
 }
 
-// ---------------------------------------------------------------------------
-// CONCENTRATION
-// ---------------------------------------------------------------------------
-
 function resolveConcentrationChange(currentConcentration, newSpellName, activeBuffs = []) {
   const droppedSpell = currentConcentration;
   const droppedBuffIds = droppedSpell
-    ? activeBuffs.filter(b => b.isConcentration && b.sourceName && b.sourceName.toLowerCase() === droppedSpell.toLowerCase()).map(b => b.id)
+    ? activeBuffs.filter(b => b.isConcentration && b.name && b.name.toLowerCase() === droppedSpell.toLowerCase()).map(b => b.id)
     : [];
   return { droppedSpell, droppedBuffIds, newConcentration: newSpellName };
 }
@@ -215,28 +228,17 @@ function resolveConcentrationCheckDC(damageTaken, concentratingOn) {
   return { required: true, dc };
 }
 
-// ---------------------------------------------------------------------------
-// AC & STAT RESOLUTION
-// ---------------------------------------------------------------------------
-
 function resolveFinalAbilityScores(character, allInventory = []) {
     const base = character.abilityScores || { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
     const final = { ...base };
-
-    const MAP = {
-        'strength': 'STR', 'dexterity': 'DEX', 'constitution': 'CON',
-        'intelligence': 'INT', 'wisdom': 'WIS', 'charisma': 'CHA'
-    };
+    const MAP = { 'strength': 'STR', 'dexterity': 'DEX', 'constitution': 'CON', 'intelligence': 'INT', 'wisdom': 'WIS', 'charisma': 'CHA' };
 
     for (const item of allInventory) {
         if (item.equipped && item.stats && item.stats.statBonuses) {
             for (let [stat, bonus] of Object.entries(item.stats.statBonuses)) {
                 let s = stat.toUpperCase();
                 if (MAP[stat.toLowerCase()]) s = MAP[stat.toLowerCase()];
-                
-                if (final[s] !== undefined) {
-                    final[s] += bonus;
-                }
+                if (final[s] !== undefined) final[s] += bonus;
             }
         }
     }
@@ -274,7 +276,7 @@ function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], al
     }
   }
 
-  const hasMageArmor = activeBuffs.some(b => b.sourceName && b.sourceName.toLowerCase() === 'mage armor');
+  const hasMageArmor = activeBuffs.some(b => b.name?.toLowerCase() === 'mage armor' || b.sourceName?.toLowerCase() === 'mage armor');
   if (hasMageArmor && equippedArmors.length === 0) {
     baseAC = 13 + dexMod;
     acMethod = 'mage-armor';
@@ -284,7 +286,6 @@ function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], al
   let acSetOverride = null;
   const breakdown = [{ source: acMethod, value: baseAC }];
 
-  // Item Bonuses (extracted via LLM)
   for (const item of allInventory) {
       if (item.equipped && item.stats && item.stats.acBonus) {
           acFlatBonus += item.stats.acBonus;
@@ -293,37 +294,35 @@ function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], al
   }
 
   for (const buff of activeBuffs) {
-    if (!buff.statAffected || !buff.statAffected.toLowerCase().includes('ac')) continue;
+    const name = (buff.name || '').toLowerCase();
+    const effect = BUFF_EFFECTS[name];
+    if (effect && effect.acBonus) {
+        acFlatBonus += effect.acBonus;
+        breakdown.push({ source: name, type: 'buff', value: effect.acBonus });
+    }
     if (buff.modifierType === 'setAC') {
       const setValue = parseInt(buff.modifierValue, 10);
       if (!isNaN(setValue)) {
         acSetOverride = acSetOverride === null ? setValue : Math.max(acSetOverride, setValue);
-        breakdown.push({ source: buff.sourceName, type: 'setAC', value: setValue });
+        breakdown.push({ source: buff.sourceName || buff.name, type: 'setAC', value: setValue });
       }
-    } else if (buff.modifierType === 'flatBonus') {
+    } else if (buff.modifierType === 'flatBonus' && (buff.statAffected || '').toLowerCase().includes('ac')) {
       const bonus = parseInt(buff.modifierValue, 10);
       if (!isNaN(bonus)) {
         acFlatBonus += bonus;
-        breakdown.push({ source: buff.sourceName, type: 'flatBonus', value: bonus });
+        breakdown.push({ source: buff.sourceName || buff.name, type: 'flatBonus', value: bonus });
       }
     }
   }
 
   const resolvedBase = acSetOverride !== null ? Math.max(baseAC, acSetOverride) : baseAC;
   const finalAC = resolvedBase + acFlatBonus;
-
   return { finalAC, breakdown, acMethod };
 }
 
-// ---------------------------------------------------------------------------
-// CONDITION MANAGEMENT
-// ---------------------------------------------------------------------------
-
 function applyCondition(currentConditions, condition) {
   const normalized = condition.toLowerCase().trim();
-  if (currentConditions.map(c => c.toLowerCase()).includes(normalized)) {
-    return { newConditions: currentConditions, alreadyPresent: true };
-  }
+  if (currentConditions.map(c => c.toLowerCase()).includes(normalized)) return { newConditions: currentConditions, alreadyPresent: true };
   return { newConditions: [...currentConditions, normalized], alreadyPresent: false };
 }
 
@@ -334,12 +333,7 @@ function removeCondition(currentConditions, condition) {
 }
 
 function resolveConditionModifiers(conditions) {
-  const result = {
-    attacksAdvantage: false, attacksDisadvantage: false, attacksAgainstAdvantage: false, attacksAgainstDisadvantage: false,
-    checksDisadvantage: false, speedOverride: null, halveMoveSpeed: false, autoFail: [], savingThrowDisadvantage: [],
-    noActions: false, noReactions: false, resistAll: false
-  };
-
+  const result = { attacksAdvantage: false, attacksDisadvantage: false, attacksAgainstAdvantage: false, attacksAgainstDisadvantage: false, checksDisadvantage: false, speedOverride: null, halveMoveSpeed: false, autoFail: [], savingThrowDisadvantage: [], noActions: false, noReactions: false, resistAll: false };
   for (const condition of conditions) {
     const effects = CONDITION_EFFECTS[condition.toLowerCase()];
     if (!effects) continue;
@@ -356,18 +350,9 @@ function resolveConditionModifiers(conditions) {
     if (effects.noReactions) result.noReactions = true;
     if (effects.resistAll) result.resistAll = true;
   }
-
-  if (result.attacksAdvantage && result.attacksDisadvantage) {
-    result.attacksAdvantage = false;
-    result.attacksDisadvantage = false;
-    result.netAttackRoll = 'straight';
-  }
+  if (result.attacksAdvantage && result.attacksDisadvantage) { result.attacksAdvantage = false; result.attacksDisadvantage = false; result.netAttackRoll = 'straight'; }
   return result;
 }
-
-// ---------------------------------------------------------------------------
-// SPELL SLOTS & FEATURES
-// ---------------------------------------------------------------------------
 
 function useSpellSlot(slotsMax, slotsUsed, slotLevel) {
   const max = slotsMax[slotLevel] || 0;
@@ -394,7 +379,6 @@ function shortRestFeatures(featureUses, characterFeatures) {
 }
 
 function longRestFeatures() { return {}; }
-
 function getAbilityModifier(score) { return Math.floor((score - 10) / 2); }
 function formatModifier(score) { const mod = getAbilityModifier(score); return mod >= 0 ? `+${mod}` : `${mod}`; }
 
@@ -402,7 +386,7 @@ module.exports = {
   resolveDamage, resolveHeal, resolveTempHp, resolveDeathSave,
   resolveConcentrationChange, isConcentrationSpell, resolveConcentrationCheckDC,
   resolveCurrentAC, resolveFinalAbilityScores,
-  applyCondition, removeCondition, resolveConditionModifiers, CONDITION_EFFECTS,
+  applyCondition, removeCondition, resolveConditionModifiers, CONDITION_EFFECTS, BUFF_EFFECTS,
   useSpellSlot, restoreAllSpellSlots,
   useFeatureCharge, shortRestFeatures, longRestFeatures,
   getAbilityModifier, formatModifier, DAMAGE_TYPES,

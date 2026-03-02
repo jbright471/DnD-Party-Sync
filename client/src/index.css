@@ -14,6 +14,8 @@
   --dnd-text: #E6EDF3;
   --dnd-purple: #A855F7;
   --dnd-blue: #38BDF8;
+  --dnd-shadow-gold: 0 0 15px rgba(212, 160, 23, 0.2);
+  --dnd-shadow-blue: 0 0 15px rgba(56, 189, 248, 0.2);
 }
 
 * {
@@ -411,6 +413,21 @@ textarea.dnd-input, textarea.input-field {
   border: 1px solid var(--dnd-border);
   border-radius: 12px;
   padding: 1.25rem;
+  box-shadow: var(--dnd-shadow-gold);
+}
+
+.border-fantasy {
+  border: 1px solid var(--dnd-border);
+  position: relative;
+}
+
+.border-fantasy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(212, 160, 23, 0.1);
+  pointer-events: none;
+  border-radius: inherit;
 }
 
 /* ---- Badge ---- */

@@ -8,6 +8,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const {
   resolveDamage,
   resolveHeal,
@@ -140,23 +141,11 @@ function getCharacterData(db, characterId) {
   const homebrewInventory = char.homebrew_inventory ? JSON.parse(char.homebrew_inventory) : [];
   const abilityScores = charData.abilityScores ?? (char.stats ? JSON.parse(char.stats) : {});
   const spellSlots = charData.spellSlots ?? (char.spell_slots ? JSON.parse(char.spell_slots) : {});
-  
-  // Normalize skills: if object (LLM format), convert to array of keys based on non-zero modifiers
-  // This matches the frontend expectation of an array of proficient skill names.
-  let skills = charData.skills ?? (char.skills ? JSON.parse(char.skills) : []);
-  if (skills && typeof skills === 'object' && !Array.isArray(skills)) {
-    // If it's the LLM object format { acrobatics: 5, ... }, we'll treat 
-    // skills with higher modifiers as "proficient" for the UI's simple check.
-    skills = Object.entries(skills)
-      .filter(([_, val]) => val > 0)
-      .map(([name, _]) => name.charAt(0).toUpperCase() + name.slice(1).replace(/([A-Z])/g, ' $1').trim());
-  }
-
   const spells = charData.spells ?? (char.spells ? JSON.parse(char.spells) : []);
   const features = charData.features ?? (char.features ? JSON.parse(char.features) : []);
+  const skills = charData.skills ?? (char.skills ? JSON.parse(char.skills) : []);
 
   return {
-    ...charData, // Spread first so normalized fields below take precedence
     id: char.id,
     name: char.name,
     class: char.class,
@@ -165,13 +154,14 @@ function getCharacterData(db, characterId) {
     baseAc: charData.baseAc ?? char.ac,
     abilityScores,
     spellSlots,
-    spells: Array.isArray(spells) ? spells : [],
-    features: Array.isArray(features) ? features : [],
-    skills: Array.isArray(skills) ? skills : [],
-    inventory: Array.isArray(inventory) ? inventory : [],
-    homebrewInventory: Array.isArray(homebrewInventory) ? homebrewInventory : [],
+    spells,
+    features,
+    skills,
+    inventory,
+    homebrewInventory,
     backstory: char.backstory || charData.backstory || '',
     raw_dndbeyond_json: char.raw_dndbeyond_json,
+    ...charData,
   };
 }
 
@@ -301,6 +291,39 @@ function removeConditionEvent(db, characterId, condition) {
   return { success: true, newConditions: state.activeConditions, logMessage: result.wasPresent ? `${char.name} is no longer ${condition}.` : `${char.name} did not have ${condition}.` };
 }
 
+function applyBuffEvent(db, characterId, buffData) {
+    const char = getCharacterData(db, characterId);
+    const state = getSessionState(db, characterId);
+    if (!state || !char) return { success: false };
+
+    const newBuff = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `buff-${Date.now()}-${Math.random()}`,
+        name: buffData.name,
+        sourceName: buffData.sourceName || 'System',
+        isConcentration: !!buffData.isConcentration,
+        timestamp: new Date().toISOString()
+    };
+
+    state.activeBuffs.push(newBuff);
+    saveSessionState(db, state);
+    return { success: true, buff: newBuff, logMessage: `Applied ${buffData.name} to ${char.name}.` };
+}
+
+function removeBuffEvent(db, characterId, buffId) {
+    const char = getCharacterData(db, characterId);
+    const state = getSessionState(db, characterId);
+    if (!state || !char) return { success: false };
+
+    const originalCount = state.activeBuffs.length;
+    state.activeBuffs = state.activeBuffs.filter(b => b.id !== buffId && b.name !== buffId);
+    
+    if (state.activeBuffs.length !== originalCount) {
+        saveSessionState(db, state);
+        return { success: true, logMessage: `Removed buff from ${char.name}.` };
+    }
+    return { success: false };
+}
+
 function useSpellSlotEvent(db, characterId, slotLevel) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
@@ -324,7 +347,7 @@ function shortRestEvent(db, characterId) {
 function longRestEvent(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
-  if (!char || !state) return { success: false, error: 'Character not found' };
+  if (!char || !state) return null;
   state.currentHp = char.baseMaxHp;
   state.tempHp = 0;
   state.spellSlotsUsed = restoreAllSpellSlots();
@@ -375,5 +398,5 @@ module.exports = {
   getSessionState, saveSessionState, getCharacterData, getResolvedCharacterState,
   applyDamageEvent, applyHealEvent, setTempHpEvent, castConcentrationSpellEvent,
   dropConcentrationEvent, applyConditionEvent, removeConditionEvent, useSpellSlotEvent,
-  shortRestEvent, longRestEvent,
+  shortRestEvent, longRestEvent, applyBuffEvent, removeBuffEvent
 };
