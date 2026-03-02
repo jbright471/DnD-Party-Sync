@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **🎵 Synchronized Soundboard**: Real-time atmospheric audio loops (Rain, Dungeon, Tavern) that play for all party members simultaneously.
 - **✨ Dynamic Multi-Buff System**: DM Enchantment Console to apply standardized 5e buffs (Bless, Haste, Shield of Faith) to multiple targets with automated stat recalculation.
 - **🎬 Cinematic Session Finale**: "End Session" now triggers a party-wide modal showing a vivid, AI-generated narrative recap of the night's highlights.
+- **🎲 Interactive Dice Intelligence**: Click-to-roll for all Stats and Skills directly from the Character Sheet, with automated modifier calculation and DDB-style visual indicators.
 - **ℹ️ Condition Intelligence**: Interactive hover tooltips on Character Sheets explaining the mechanical impact of all active conditions.
 
 ### Changed

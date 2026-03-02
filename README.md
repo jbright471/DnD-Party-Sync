@@ -23,6 +23,7 @@ A containerized, real-time companion application for managing D&D campaigns, com
 - **🛡️ Equipment Manager:** Equip/Unequip items in real-time with automatic stat recalculation.
 - **🪄 Spellcasting Layer:** Interactive spell slot tracking and active concentration management.
 - **🔄 Hybrid Sync Engine:** Re-sync with D&D Beyond while preserving local homebrew items and buffs.
+- **🎲 Interactive Dice Intelligence:** Click any Stat or Skill on the character sheet to instantly roll with correct modifiers, advantage, and proficiency.
 - **📊 Advanced Party Dashboard:** Mobile-first Tailwind UI with animated HP bars and status indicators.
 
 ## Setup & Deployment

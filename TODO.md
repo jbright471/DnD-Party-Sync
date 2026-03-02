@@ -16,6 +16,7 @@ A living document for the *DnD Party Sync* project, outlining upcoming features,
 ## ✅ Completed
 
 - [x] **Phase 7.0: Map & VTT**: Shared battlemaps, grid-snapping, and persistent tokens.
+- [x] **Phase 7.1: Interactive Rolls**: Click-to-roll stats/skills with DDB-style UI indicators and advantage logic.
 - [x] **Phase 7.5: Atmospheric Systems**: Synchronized Soundboard and Dynamic Multi-Buff console.
 - [x] **Phase 7.6: Session Finale**: Automated AI recaps and cinematic session closure UI.
 - [x] **Phase 6.0: Combat Commander**: Monster Library, Spawning, and Fog of War (Initiative).
