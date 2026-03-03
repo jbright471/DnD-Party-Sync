@@ -51,6 +51,7 @@ function runMigrations() {
   addColumnSafe('characters', 'raw_dndbeyond_json', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'data_json', "TEXT DEFAULT '{}'"); // New Pivot Column
   addColumnSafe('characters', 'homebrew_inventory', "TEXT DEFAULT '[]'");
+  addColumnSafe('characters', 'ddb_id', "INTEGER UNIQUE DEFAULT NULL");
 
   addColumnSafe('action_log', 'status', "TEXT DEFAULT 'applied'");
   addColumnSafe('action_log', 'effects_json', "TEXT DEFAULT NULL");
@@ -203,6 +204,23 @@ function runMigrations() {
     -- Initialize default time
     INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('current_time', '{"day":1, "month":1, "year":1492, "hour":8, "minute":0}');
     INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('current_weather', '{"condition":"Clear", "impact":"None"}');
+  `);
+
+  // ---- Phase 11: World Map Overworld ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS map_markers (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_map_id INTEGER NOT NULL, -- The Overworld Map
+      linked_map_id INTEGER,          -- The Battlemap it warps to
+      name         TEXT NOT NULL,
+      type         TEXT DEFAULT 'location', -- 'location', 'quest', 'encounter'
+      x            INTEGER DEFAULT 0,
+      y            INTEGER DEFAULT 0,
+      is_discovered INTEGER DEFAULT 0, -- DM reveals this to players
+      is_hidden    INTEGER DEFAULT 0, -- DM only
+      FOREIGN KEY (parent_map_id) REFERENCES maps(id) ON DELETE CASCADE,
+      FOREIGN KEY (linked_map_id) REFERENCES maps(id) ON DELETE SET NULL
+    );
   `);
 
   console.log('[DB] Migrations complete.');

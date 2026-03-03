@@ -39,9 +39,8 @@ const SpellItem = ({ spell, character, onCast }) => {
         <div className="flex flex-col bg-dnd-surface border border-dnd-border rounded overflow-hidden hover:border-dnd-blue/30 transition-all group">
             <div className="flex justify-between items-center p-3 cursor-pointer" onClick={() => setExpanded(!expanded)}>
                 <div className="flex items-center gap-3">
-                    <span className={`w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border transition-all ${
-                        expanded ? 'bg-dnd-blue text-dnd-navy border-dnd-blue' : 'bg-dnd-navy text-dnd-blue border-dnd-blue/30 group-hover:border-dnd-blue/60'
-                    }`}>
+                    <span className={`w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border transition-all ${expanded ? 'bg-dnd-blue text-dnd-navy border-dnd-blue' : 'bg-dnd-navy text-dnd-blue border-dnd-blue/30 group-hover:border-dnd-blue/60'
+                        }`}>
                         {spell.level === 0 ? 'C' : spell.level}
                     </span>
                     <div>
@@ -50,17 +49,16 @@ const SpellItem = ({ spell, character, onCast }) => {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <button 
+                    <button
                         onClick={(e) => {
                             e.stopPropagation();
                             if (hasSlots) onCast(spell.level);
                             else alert(`No Level ${spell.level} slots remaining!`);
                         }}
-                        className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded transition-all ${
-                            hasSlots 
-                            ? 'bg-dnd-blue/10 text-dnd-blue border border-dnd-blue/20 hover:bg-dnd-blue/30' 
+                        className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded transition-all ${hasSlots
+                            ? 'bg-dnd-blue/10 text-dnd-blue border border-dnd-blue/20 hover:bg-dnd-blue/30'
                             : 'bg-dnd-muted/10 text-dnd-muted border border-dnd-muted/20 cursor-not-allowed'
-                        }`}
+                            }`}
                     >Cast</button>
                     <span className={`text-xs text-dnd-muted transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}>▼</span>
                 </div>
@@ -75,7 +73,7 @@ const SpellItem = ({ spell, character, onCast }) => {
 };
 
 export default function CharacterSheetModal({ character, onClose }) {
-    const [activeTab, setActiveTab] = useState('combat');
+    const [activeTab, setActiveTab] = useState('actions');
     const [isSyncing, setIsSyncing] = useState(false);
     const [isParsing, setIsParsing] = useState(null);
 
@@ -165,7 +163,7 @@ export default function CharacterSheetModal({ character, onClose }) {
     return (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300" onClick={onClose}>
             <div className="bg-dnd-surface border border-dnd-border w-full max-w-[1200px] h-[95vh] overflow-hidden rounded-lg shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
-                
+
                 {/* Header (Top) */}
                 <div className="p-4 bg-dnd-surface border-b border-dnd-border flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-4">
@@ -189,7 +187,7 @@ export default function CharacterSheetModal({ character, onClose }) {
                 <div className="flex flex-1 overflow-hidden">
                     {/* Left Column: Persistent Stats, Saves, Skills (DDB Style) */}
                     <div className="w-[320px] bg-dnd-navy border-r border-dnd-border flex flex-col overflow-y-auto custom-scrollbar p-4 gap-6 shrink-0">
-                        
+
                         {/* Ability Scores */}
                         <div className="grid grid-cols-3 gap-2">
                             {['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map(s => {
@@ -253,27 +251,28 @@ export default function CharacterSheetModal({ character, onClose }) {
                         {/* Tab Navigation */}
                         <div className="flex bg-dnd-navy border-b border-dnd-border px-4 overflow-x-auto custom-scrollbar">
                             {[
-                                { id: 'combat', label: '⚔️ Combat' },
-                                { id: 'inventory', label: '🎒 Inventory' },
+                                { id: 'actions', label: '⚔️ Actions' },
                                 { id: 'spells', label: '🪄 Spells' },
-                                { id: 'features', label: '✨ Features' },
+                                { id: 'inventory', label: '🎒 Inventory' },
+                                { id: 'features', label: '✨ Features & Traits' },
+                                { id: 'background', label: '📜 Background' },
+                                { id: 'notes', label: '📝 Notes' },
                                 { id: 'conditions', label: '🩹 Conditions' }
                             ].map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 whitespace-nowrap ${
-                                        activeTab === tab.id ? 'text-dnd-gold border-dnd-gold bg-dnd-surface/50' : 'text-dnd-muted border-transparent hover:text-white'
-                                    }`}
+                                    className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 whitespace-nowrap ${activeTab === tab.id ? 'text-dnd-gold border-dnd-gold bg-dnd-surface/50' : 'text-dnd-muted border-transparent hover:text-white'
+                                        }`}
                                 >{tab.label}</button>
                             ))}
                         </div>
 
                         {/* Tab Content Area */}
                         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                            
-                            {/* COMBAT TAB */}
-                            {activeTab === 'combat' && (
+
+                            {/* ACTIONS TAB */}
+                            {activeTab === 'actions' && (
                                 <CombatActions character={character} />
                             )}
 
@@ -374,19 +373,45 @@ export default function CharacterSheetModal({ character, onClose }) {
                             {/* FEATURES TAB */}
                             {activeTab === 'features' && (
                                 <div className="flex flex-col gap-4">
-                                    {character.backstory && (
-                                        <div className="p-4 bg-dnd-navy/30 border border-dnd-gold/20 rounded-lg mb-4 shadow-xl">
-                                            <h4 className="text-dnd-gold font-fantasy text-lg mb-2 underline underline-offset-4 decoration-dnd-gold/30">📜 Backstory</h4>
-                                            <p className="text-[11px] text-dnd-text italic leading-relaxed whitespace-pre-wrap">{character.backstory}</p>
+                                    <h4 className="text-[10px] text-dnd-muted uppercase font-bold tracking-widest mb-2 border-b border-dnd-border pb-1">Features & Traits</h4>
+                                    {(character.features || []).length === 0 ? (
+                                        <div className="text-center py-10 text-dnd-muted italic text-sm">No specific class or racial features found.</div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {(character.features || []).map((f, idx) => (
+                                                <div key={idx} className="p-4 bg-dnd-surface border border-dnd-border rounded-lg shadow-sm hover:border-dnd-gold/30 transition-all">
+                                                    <h4 className="text-dnd-gold font-fantasy text-sm mb-2 uppercase tracking-wide">{f.name}</h4>
+                                                    <div className="text-[10px] text-dnd-muted leading-relaxed" dangerouslySetInnerHTML={{ __html: f.description }} />
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {(character.features || []).map((f, idx) => (
-                                            <div key={idx} className="p-4 bg-dnd-surface border border-dnd-border rounded-lg shadow-sm hover:border-dnd-gold/30 transition-all">
-                                                <h4 className="text-dnd-gold font-fantasy text-sm mb-2 uppercase tracking-wide">{f.name}</h4>
-                                                <div className="text-[10px] text-dnd-muted leading-relaxed" dangerouslySetInnerHTML={{ __html: f.description }} />
-                                            </div>
-                                        ))}
+                                </div>
+                            )}
+
+                            {/* BACKGROUND TAB */}
+                            {activeTab === 'background' && (
+                                <div className="flex flex-col gap-4">
+                                    {character.backstory ? (
+                                        <div className="p-4 bg-dnd-navy/30 border border-dnd-gold/20 rounded-lg shadow-xl">
+                                            <h4 className="text-dnd-gold font-fantasy text-lg mb-4 underline underline-offset-4 decoration-dnd-gold/30">📜 Backstory</h4>
+                                            <p className="text-[11px] text-dnd-text italic leading-relaxed whitespace-pre-wrap">{character.backstory}</p>
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-10 bg-dnd-surface border border-dnd-border rounded-xl">
+                                            <span className="text-2xl mb-2 block">📖</span>
+                                            <span className="text-dnd-muted italic text-sm">No backstory has been written for this character yet.</span>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* NOTES TAB */}
+                            {activeTab === 'notes' && (
+                                <div className="flex flex-col gap-4">
+                                    <h4 className="text-[10px] text-dnd-muted uppercase font-bold tracking-widest mb-2 border-b border-dnd-border pb-1">Character Notes</h4>
+                                    <div className="p-4 bg-dnd-navy/30 border border-dnd-border rounded-lg min-h-[200px] shadow-inner text-dnd-text text-sm font-serif">
+                                        {character.notes || <span className="text-dnd-muted italic">No notes recorded. (Editing coming soon)</span>}
                                     </div>
                                 </div>
                             )}

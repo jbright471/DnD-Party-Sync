@@ -20,6 +20,7 @@ A containerized, real-time companion application for managing D&D campaigns, com
 - **👹 Combat Commander:** Pre-built encounter library and on-the-fly monster spawning with initiative integration.
 - **🌫️ Combat Fog of War:** Hide/Reveal combatants and obscure monster HP (Ghosting) for players.
 - **🔮 Creative AI Lore Master:** Dedicated creative console for generating evocative room descriptions, NPCs, and loot.
+- **🔄 Deduplicated Character Sync:** High-speed import from D&D Beyond URLs with automatic deduplication, concurrency locking, and instant session state initialization.
 - **🛡️ Equipment Manager:** Equip/Unequip items in real-time with automatic stat recalculation.
 - **🪄 Spellcasting Layer:** Interactive spell slot tracking and active concentration management.
 - **🔄 Hybrid Sync Engine:** Re-sync with D&D Beyond while preserving local homebrew items and buffs.

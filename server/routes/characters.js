@@ -29,6 +29,16 @@ router.post('/', (req, res) => {
         );
         const result = stmt.run(name, charClass, level || 1, max_hp, max_hp, ac);
         const newChar = db.prepare('SELECT * FROM characters WHERE id = ?').get(result.lastInsertRowid);
+        
+        // Initialize default session state
+        db.prepare(`
+          INSERT INTO session_states
+            (character_id, current_hp, temp_hp, death_saves_json,
+             conditions_json, buffs_json, concentrating_on,
+             slots_used_json, hd_used_json, feature_uses_json, active_features_json)
+          VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
+        `).run(newChar.id, newChar.current_hp);
+
         res.status(201).json(newChar);
     } catch (err) {
         res.status(500).json({ error: err.message });

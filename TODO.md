@@ -2,19 +2,19 @@
 
 A living document for the *DnD Party Sync* project, outlining upcoming features, bug fixes, and architectural optimizations.
 
-## 🔜 Current Sprint: World Building (Phase 8.0)
+## 🔜 Current Sprint: Advanced Integrations (Phase 11.0)
 
-- [ ] **Multi-Level Maps**: Support for verticality (Floors/Levels) within a single Map entry.
-- [ ] **NPC Archive**: A non-combat NPC directory for tracking shopkeepers, quest-givers, and their secrets.
-- [ ] **Interactive Loot Tables**: Rollable tables based on location/challenge, using AI to generate flavored items.
-
-## 🔮 Future Enhancements
-
+- [ ] **World Map (Global Overworld)**: A high-level map linking multiple battlemaps with fast-travel markers.
 - [ ] **Voice Integration**: Proximity-based chat using WebRTC.
 - [ ] **Mobile App Wrapper**: Capacitor/React Native wrapper for a true native feeling on mobile devices.
 
 ## ✅ Completed
 
+- [x] **Phase 11.1: Character Deduplication**: Introduced `ddb_id` and import locking to prevent duplicate character creation.
+- [x] **Phase 8.3: Living Environments**: Looping video battlemaps (.mp4/.webm) with layered token support.
+- [x] **Phase 8.0: Multi-Level Maps**: Support for verticality (Floors/Levels) within a single Map entry.
+- [x] **Phase 8.0: NPC Archive**: A non-combat NPC directory for tracking shopkeepers, quest-givers, and secrets.
+- [x] **Phase 8.0: AI Loot Forger**: Ollama-powered context-aware loot generation and distribution.
 - [x] **Phase 8.2: Mobile-Optimized Combat**: Introduced Stitch-inspired mobile bottom tabs, persistent dice FAB, and animated premium Action Cards for combat.
 - [x] **Phase 8.1: Three-Pane Dashboard**: Refactored the core UI into a highly dense, non-scrolling 3-column desktop layout with persistent dice/logs.
 - [x] **Phase 7.0: Map & VTT**: Shared battlemaps, grid-snapping, and persistent tokens.

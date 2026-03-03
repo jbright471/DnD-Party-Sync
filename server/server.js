@@ -207,8 +207,9 @@ function broadcastMapState() {
     const map = db.prepare('SELECT * FROM maps WHERE is_active = 1').get();
     if (map) {
         const tokens = db.prepare('SELECT * FROM map_tokens WHERE map_id = ?').all(map.id);
-        const image_data = map.image_path ? `/api/maps/image/${path.basename(map.image_path)}` : null;
-        io.emit('map_state', { ...map, image_data, tokens });
+        const markers = db.prepare('SELECT * FROM map_markers WHERE parent_map_id = ?').all(map.id);
+        const image_data = map.image_path ? `/api/maps/file/${path.basename(map.image_path)}` : null;
+        io.emit('map_state', { ...map, image_data, tokens, markers });
     } else {
         io.emit('map_state', null);
     }
@@ -497,6 +498,31 @@ io.on('connection', (socket) => {
         db.prepare('UPDATE initiative_tracker SET initiative = ? WHERE id = ?').run(initiative, trackerId);
         resortTracker();
         broadcastInitiative();
+    });
+
+    socket.on('add_marker', ({ mapId, name, type, x, y, linkedMapId }) => {
+        db.prepare(`
+            INSERT INTO map_markers (parent_map_id, linked_map_id, name, type, x, y)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(mapId, linkedMapId || null, name, type, x, y);
+        broadcastMapState();
+    });
+
+    socket.on('update_marker', ({ markerId, updates }) => {
+        const fields = [];
+        const values = [];
+        Object.entries(updates).forEach(([k, v]) => {
+            fields.push(`${k} = ?`);
+            values.push(v);
+        });
+        values.push(markerId);
+        db.prepare(`UPDATE map_markers SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+        broadcastMapState();
+    });
+
+    socket.on('delete_marker', ({ markerId }) => {
+        db.prepare('DELETE FROM map_markers WHERE id = ?').run(markerId);
+        broadcastMapState();
     });
 
     socket.on('update_initiative_hp', ({ trackerId, delta }) => {

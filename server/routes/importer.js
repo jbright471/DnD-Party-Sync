@@ -14,6 +14,9 @@ const { createInitialSessionState } = require('../lib/models');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// In-memory lock to prevent concurrent imports for the same character ID
+const activeImports = new Set();
+
 // GET /api/characters/import/diag — diagnostic endpoint
 router.get('/diag', async (req, res) => {
     const diag = {
@@ -57,41 +60,88 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'A D&D Beyond character URL is required.' });
     }
 
-    const match =
-        url.match(/\/characters\/(\d+)/) ||
-        url.match(/_(\d+)\.pdf/) ||
-        url.match(/characters\/(\d+)/);
-
+    const match = url.match(/\/characters\/(\d+)/);
     if (!match) {
-        return res.status(400).json({
-            error: 'Invalid D&D Beyond URL.'
-        });
+        return res.status(400).json({ error: 'Invalid D&D Beyond URL. Please use the full character URL.' });
     }
 
     const characterId = match[1];
+    
+    // Concurrent request lock
+    if (activeImports.has(characterId)) {
+        console.warn(`[Importer] Import already in progress for DDB ID: ${characterId}`);
+        return res.status(409).json({ error: 'An import for this character is already in progress. Please wait.' });
+    }
+
+    // Deduplication check: see if this ddb_id already exists in our DB
+    try {
+        const existing = db.prepare("SELECT id, name FROM characters WHERE ddb_id = ?").get(characterId);
+        if (existing) {
+            console.log(`[Importer] Character ${existing.name} (DDB ID: ${characterId}) already exists. Returning existing record.`);
+            return res.status(200).json(existing);
+        }
+    } catch (e) {
+        console.warn(`[Importer] Deduplication check failed (falling back to LIKE check): ${e.message}`);
+        // Fallback for older entries without ddb_id
+        const existing = db.prepare("SELECT id, name FROM characters WHERE raw_dndbeyond_json LIKE ?").get(`%"id":${characterId},%`);
+        if (existing) return res.status(200).json(existing);
+    }
+
+    activeImports.add(characterId);
+
+    // Hardened headers to bypass basic scraping blocks
     const BROWSER_HEADERS = {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.dndbeyond.com/',
+        'Origin': 'https://www.dndbeyond.com'
     };
 
     try {
         const apiUrl = `https://character-service.dndbeyond.com/character/v5/character/${characterId}`;
-        const response = await fetch(apiUrl, { headers: BROWSER_HEADERS, timeout: 8000 });
+        const response = await fetch(apiUrl, { headers: BROWSER_HEADERS, timeout: 10000 });
 
         if (response.ok) {
             const json = await response.json();
             if (json.data) {
                 const character = parseCharacterData(json.data);
                 const newChar = insertCharacter(character);
+
+                // Initialize session state for the newly imported character
+                try {
+                    const sessionState = {
+                        sessionId: "ddb-import-" + Date.now(),
+                        currentHp: character.currentHp,
+                        tempHp: 0,
+                        deathSaves: { successes: 0, failures: 0 },
+                        activeConditions: [],
+                        activeBuffs: [],
+                        concentratingOn: null,
+                        spellSlotsUsed: {},
+                        hitDiceUsed: {},
+                        featureUses: {},
+                        activeFeatures: []
+                    };
+                    insertSessionState(newChar.id, sessionState);
+                    console.log(`[Importer] Initialized session state for ${newChar.name}`);
+                } catch (stateErr) {
+                    console.error(`[Importer] Failed to initialize session state: ${stateErr.message}`);
+                }
+
+                activeImports.delete(characterId);
                 return res.status(201).json(newChar);
             }
+        } else {
+            console.warn(`[Importer] DDB API responded with status: ${response.status}`);
         }
     } catch (err) {
-        console.log(`[Importer] Strategy 1 Error: ${err.message}`);
+        console.error(`[Importer] Import Error: ${err.message}`);
+    } finally {
+        activeImports.delete(characterId);
     }
 
     return res.status(502).json({
-        error: 'D&D Beyond is blocking automated access. Ensure character is PUBLIC.'
+        error: 'D&D Beyond is blocking automated access. Ensure character is PUBLIC and try again later.'
     });
 });
 
@@ -109,9 +159,11 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
 
         let rawText = "";
         try {
+            // Priority: pdftotext -layout (best for DDB sheets)
             const { stdout } = await execAsync(`pdftotext -layout "${tempPath}" -`);
             rawText = stdout;
         } catch (execErr) {
+            console.warn('[Importer] pdftotext failed, falling back to pdf-parse');
             const pdfData = await pdfParse(req.file.buffer);
             rawText = pdfData.text;
         } finally {
@@ -119,14 +171,14 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
         }
 
         const parsed = await parseCharacterPdfLLM(rawText);
-        if (!parsed || !parsed.name) throw new Error('AI failed to parse PDF.');
+        if (!parsed || !parsed.name) throw new Error('AI failed to extract character data from PDF.');
 
-        const charClassStr = (parsed.classes || []).map(c => `${c.name} ${c.level}`).join(' / ') || 'Unknown';
+        const classStr = (parsed.classes || []).map(c => `${c.name} ${c.level}`).join(' / ') || 'Unknown';
         const totalLevel = (parsed.classes || []).reduce((sum, c) => sum + (c.level || 0), 0) || 1;
 
         const character = {
             name: parsed.name,
-            charClass: charClassStr,
+            class: classStr, // Matches DB column 'class'
             level: totalLevel,
             maxHp: parsed.baseMaxHp || 10,
             currentHp: parsed.baseMaxHp || 10,
@@ -150,6 +202,7 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
         res.status(201).json(newChar);
 
     } catch (err) {
+        console.error('[Importer] PDF Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -178,7 +231,6 @@ function calculateAbilityScore(statId, statName, data) {
 
 function extractFeatures(data) {
     const features = [];
-    // Class features
     if (data.classes) {
         data.classes.forEach(cls => {
             if (cls.classFeatures) {
@@ -192,7 +244,6 @@ function extractFeatures(data) {
             }
         });
     }
-    // Race features
     if (data.race && data.race.racialTraits) {
         data.race.racialTraits.forEach(rt => {
             features.push({
@@ -281,12 +332,10 @@ function parseCharacterData(data) {
         description: i.definition.description
     }));
 
-    // Extract detailed fields
     const features = extractFeatures(data);
     const spells = extractSpells(data);
     const skills = extractSkills(data);
 
-    // Spell Slots
     const spellSlots = {};
     if (data.spellSlots) {
         data.spellSlots.forEach((slot, idx) => {
@@ -295,7 +344,8 @@ function parseCharacterData(data) {
     }
 
     return {
-        name, charClass, level, maxHp, currentHp, ac,
+        name, class: charClass, level, maxHp, currentHp, ac,
+        ddb_id: data.id || null,
         stats: JSON.stringify(statsObj),
         skills: JSON.stringify(skills),
         features: JSON.stringify(features),
@@ -312,11 +362,12 @@ function parseCharacterData(data) {
 
 function insertCharacter(charObj) {
     const name = charObj.name;
-    const charClass = charObj.charClass || charObj.class || 'Adventurer';
+    const charClass = charObj.class || charObj.charClass || 'Adventurer';
     const level = charObj.level || 1;
     const max_hp = charObj.maxHp || charObj.max_hp || 10;
     const current_hp = charObj.currentHp || charObj.current_hp || max_hp;
     const ac = charObj.ac || 10;
+    const ddb_id = charObj.ddb_id || null;
     
     const stats = charObj.stats || '{}';
     const skills = charObj.skills || '[]';
@@ -332,14 +383,14 @@ function insertCharacter(charObj) {
 
     const stmt = db.prepare(`
         INSERT INTO characters (
-            name, class, level, max_hp, current_hp, ac,
+            name, class, level, max_hp, current_hp, ac, ddb_id,
             stats, skills, features, features_traits, inventory, homebrew_inventory, spells, spell_slots, backstory, 
             raw_dndbeyond_json, data_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const result = stmt.run(
-        name, charClass, level, max_hp, current_hp, ac,
+        name, charClass, level, max_hp, current_hp, ac, ddb_id,
         stats, skills, features, features_traits, inventory, homebrew_inventory, spells, spell_slots, backstory,
         raw_dndbeyond_json, data_json
     );

@@ -1,11 +1,26 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import socket from '../socket';
 
+const FILTERS = ['All', 'Attack', 'Action', 'Bonus Action', 'Reaction', 'Other', 'Limited Use'];
+
 export default function CombatActions({ character }) {
+    const [activeFilter, setActiveFilter] = useState('All');
+
     // Parse weapons/features to find offensive capabilities
-    const actionCards = useMemo(() => {
+    const allCards = useMemo(() => {
         const ObjectValues = obj => obj ? Object.values(obj) : [];
         const cards = [];
+
+        const getCategoryFromDesc = (desc, defaultCat) => {
+            if (!desc) return defaultCat;
+            const d = desc.toLowerCase();
+            if (d.includes('per short rest') || d.includes('per long rest') || d.includes('charge')) return 'Limited Use';
+            if (d.includes('bonus action')) return 'Bonus Action';
+            if (d.includes('reaction')) return 'Reaction';
+            if (d.includes('as an action')) return 'Action';
+            if (d.includes('attack')) return 'Attack';
+            return defaultCat;
+        };
 
         // 1. Check equipped inventory for weapons or damage items
         (character.inventory || []).filter(item => item.equipped).forEach(item => {
@@ -18,7 +33,8 @@ export default function CombatActions({ character }) {
                     name: item.name,
                     description: item.description || 'A trusty weapon.',
                     type: item.filterType || 'Weapon',
-                    source: 'Equipment'
+                    source: 'Equipment',
+                    category: getCategoryFromDesc(desc, 'Attack')
                 });
             }
         });
@@ -26,14 +42,15 @@ export default function CombatActions({ character }) {
         // 2. Check features for offensive capabilities
         (character.features || []).forEach(feature => {
             const desc = feature.description ? feature.description.toLowerCase() : '';
-            // Only pull in features that mention damage, attacks, or dice to avoid cluttering combat pane with ribbon features
-            if (desc.includes('damage') || desc.includes('attack') || desc.match(/\d*d\d+/)) {
+            // Only pull in features that mention damage, attacks, dice, or actions
+            if (desc.includes('damage') || desc.includes('attack') || desc.match(/\d*d\d+/) || desc.includes('action')) {
                 cards.push({
                     id: feature.id || feature.name,
                     name: feature.name,
                     description: feature.description,
                     type: 'Feature',
-                    source: 'Class Feature'
+                    source: 'Class Feature',
+                    category: getCategoryFromDesc(desc, 'Other')
                 });
             }
         });
@@ -45,12 +62,24 @@ export default function CombatActions({ character }) {
                 ObjectValues(raw.actions).flat().forEach(act => {
                     // avoid duplicates by name
                     if (!cards.find(c => c.name === act.name)) {
+                        let category = 'Action';
+                        if (act.activation) {
+                            if (act.activation.activationType === 3) category = 'Bonus Action';
+                            else if (act.activation.activationType === 4) category = 'Reaction';
+                            else if (act.activation.activationType === 1) category = 'Action';
+                            else if (act.activation.activationType === 8) category = 'Other';
+                        } else {
+                            category = getCategoryFromDesc(act.snippet || act.description, 'Action');
+                        }
+                        if (act.displayAsAttack) category = 'Attack';
+
                         cards.push({
                             id: act.id || act.name,
                             name: act.name,
                             description: act.snippet || act.description || 'A combat action.',
                             type: 'Action',
-                            source: 'DDB Action'
+                            source: 'DDB Action',
+                            category: category
                         });
                     }
                 });
@@ -59,6 +88,14 @@ export default function CombatActions({ character }) {
 
         return cards;
     }, [character]);
+
+    const actionCards = useMemo(() => {
+        if (activeFilter === 'All') return allCards;
+        return allCards.filter(c => {
+            if (activeFilter === 'Attack') return c.category === 'Attack' || c.type === 'Weapon';
+            return c.category === activeFilter;
+        });
+    }, [allCards, activeFilter]);
 
     const handleActionRoll = (card) => {
         // Emit a generic roll/action event or prompt the user for dice
@@ -80,7 +117,7 @@ export default function CombatActions({ character }) {
     return (
         <div className="flex flex-col gap-4">
             {/* Header section with Badges */}
-            <div className="flex justify-between items-center mb-2 border-b border-dnd-red/30 pb-2">
+            <div className="flex justify-between items-center mb-1">
                 <h4 className="text-[12px] text-dnd-red font-fantasy tracking-[0.2em] uppercase m-0 flex items-center gap-2">
                     <span className="text-xl">⚔️</span> Attack Actions
                 </h4>
@@ -97,6 +134,22 @@ export default function CombatActions({ character }) {
                         </span>
                     )}
                 </div>
+            </div>
+
+            {/* Sub-Filters (DDB Style) */}
+            <div className="flex flex-wrap gap-2 border-b border-dnd-red/30 pb-3 mb-2">
+                {FILTERS.map(f => (
+                    <button
+                        key={f}
+                        onClick={() => setActiveFilter(f)}
+                        className={`text-[9px] uppercase tracking-widest font-bold px-3 py-1.5 rounded transition-all shadow-sm ${activeFilter === f
+                            ? 'bg-[#c6a254] text-[#121212] border-transparent shadow-[0_0_10px_rgba(198,162,84,0.4)]'
+                            : 'bg-[#181818] text-white/70 hover:text-white border border-[#303030] hover:border-[#505050]'
+                            }`}
+                    >
+                        {f}
+                    </button>
+                ))}
             </div>
 
             {actionCards.length === 0 ? (

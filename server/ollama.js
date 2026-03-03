@@ -1,7 +1,7 @@
 const fetch = require('node-fetch');
 
-// Default to localhost, allow override via Docker environment variables
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+// Default to local p40 instance for high performance
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama-p40:11434';
 const DEFAULT_MODEL = 'gemma3:27b';
 
 // ---- Rules Assistant (Phase 2) ----

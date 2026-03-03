@@ -20,6 +20,8 @@ import SoundReceiver from './components/SoundReceiver';
 import QuestTracker from './components/QuestTracker';
 import AtmosphereOverlay from './components/AtmosphereOverlay';
 import RecapArchive from './components/RecapArchive';
+import NPCManager from './components/NPCManager';
+import LootManager from './components/LootManager';
 
 // ── New components from rules engine phase ───────────────────────────────────
 import InitiativeTracker from './components/InitiativeTracker';
@@ -62,7 +64,6 @@ const TABS = [
   { id: 'map', label: '🗺️ Map' },
   { id: 'quests', label: '📜 Quests' },
   { id: 'initiative', label: '⚔ Initiative' },
-  { id: 'log', label: '📖 Log', isMobileOnly: true },
   { id: 'campaign', label: '📜 Campaign' },
   { id: 'notes', label: '📋 Notes' },
 ];
@@ -80,11 +81,12 @@ function App() {
   const [showHomebrewCreator, setShowHomebrewCreator] = useState(false);
   const [showCompendium, setShowCompendium] = useState(false);
   const [showRecapArchive, setShowRecapArchive] = useState(false);
+  const [showNpcManager, setShowNpcManager] = useState(false);
+  const [showLootManager, setShowLootManager] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState(null);
   const [currentRecap, setCurrentRecap] = useState(null);
   const [isDm, setIsDm] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [showMobileDice, setShowMobileDice] = useState(false);
 
   const prevHpMapRef = useRef({});
 
@@ -174,9 +176,6 @@ function App() {
       case 'quests':
         return <QuestTracker isDm={isDm} />;
 
-      case 'log':
-        return <div className="p-4 h-full"><ActionLog logs={logs} party={party} approvalMode={isApprovalMode} /></div>;
-
       case 'initiative':
         return (
           <div className="max-w-[500px] mx-auto p-4">
@@ -216,6 +215,8 @@ function App() {
         </div>
 
         <div className="hidden md:flex items-center gap-2">
+          <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowLootManager(true)}>💰 Loot</button>
+          <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowNpcManager(true)}>👥 NPCs</button>
           <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowRecapArchive(true)}>📜 Chronicles</button>
           <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowCompendium(true)}>📦 Compendium</button>
           <button className="btn-secondary px-3 py-1.5 text-xs text-white" onClick={() => setShowHomebrewCreator(true)}>🔮 Creator</button>
@@ -235,8 +236,22 @@ function App() {
         {/* Mobile Menu Overlay */}
         {isMenuOpen && (
           <div className="absolute top-full left-0 right-0 bg-dnd-surface border-b border-dnd-border p-4 flex flex-col gap-4 shadow-2xl md:hidden animate-in slide-in-from-top-4 duration-200 z-50">
+            <div className="flex flex-col gap-2">
+              <span className="text-[10px] text-dnd-muted font-bold uppercase tracking-widest pl-2">Navigation</span>
+              {TABS.map(tab => (
+                <button
+                  key={tab.id}
+                  className={`text-left px-4 py-3 rounded-lg transition-all ${activeTab === tab.id ? 'bg-dnd-gold/10 text-dnd-gold' : 'text-dnd-text hover:bg-white/5'}`}
+                  onClick={() => { setActiveTab(tab.id); setIsMenuOpen(false); }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
             <div className="flex flex-col gap-2 pt-2 border-t border-dnd-border">
               <span className="text-[10px] text-dnd-muted font-bold uppercase tracking-widest pl-2">Tools</span>
+              <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowLootManager(true); setIsMenuOpen(false); }}>💰 Loot Forger</button>
+              <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowNpcManager(true); setIsMenuOpen(false); }}>👥 NPC Archive</button>
               <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowRecapArchive(true); setIsMenuOpen(false); }}>📜 Chronicles</button>
               <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowCompendium(true); setIsMenuOpen(false); }}>📦 Compendium</button>
               <button className="btn-secondary w-full justify-start py-3" onClick={() => { setShowHomebrewCreator(true); setIsMenuOpen(false); }}>🔮 Creator</button>
@@ -266,8 +281,8 @@ function App() {
         </main>
       ) : (
         <>
-          <nav className="hidden md:flex shrink-0 bg-dnd-surface border-b border-dnd-border px-4 py-2 gap-2 overflow-x-auto">
-            {TABS.filter(t => !t.isMobileOnly).map(tab => (
+          <nav className="tab-nav hidden md:flex shrink-0 bg-dnd-surface border-b border-dnd-border px-4 py-2 gap-2 overflow-x-auto">
+            {TABS.map(tab => (
               <button
                 key={tab.id}
                 className={`px-4 py-1.5 rounded-full text-sm font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-dnd-gold text-dnd-navy' : 'text-dnd-muted hover:text-white hover:bg-white/10'}`}
@@ -278,7 +293,7 @@ function App() {
             ))}
           </nav>
 
-          <div className="flex-1 flex flex-col lg:grid lg:grid-cols-[250px_minmax(0,1fr)_300px] overflow-hidden relative">
+          <div className="flex-1 flex flex-col lg:grid lg:grid-cols-[250px_minmax(0,1fr)_300px] overflow-hidden">
 
             {/* Left Pane: Party Tracker */}
             <aside className="hidden lg:flex flex-col h-full bg-gray-900 border-r border-dnd-border">
@@ -291,12 +306,12 @@ function App() {
             </aside>
 
             {/* Center Pane: Dynamic Content (Character Sheet, Map, Initiative) */}
-            <main className="flex-1 overflow-y-auto bg-gray-900 custom-scrollbar relative pb-[80px] lg:pb-0">
+            <main className="flex-1 overflow-y-auto bg-gray-900 custom-scrollbar relative">
               {renderTabContent()}
             </main>
 
             {/* Right Pane: Dice & Log */}
-            <aside className="hidden lg:flex flex-col h-full overflow-hidden bg-dnd-surface border-l border-dnd-border shrink-0">
+            <aside className="h-[40vh] lg:h-full flex flex-col overflow-hidden bg-dnd-surface border-l border-dnd-border shrink-0">
               <div className="p-3 border-b border-dnd-border shrink-0 bg-gray-950">
                 <DiceRoller characterName={selectedCharacter ? selectedCharacter.name : "Player"} />
               </div>
@@ -307,39 +322,6 @@ function App() {
                 <DndBeyondImporter />
               </div>
             </aside>
-
-            {/* Mobile Bottom Navigation */}
-            <nav className="absolute bottom-0 left-0 right-0 h-[70px] bg-dnd-surface/95 backdrop-blur-md border-t border-dnd-border flex justify-between lg:hidden z-40 overflow-x-auto custom-scrollbar px-2 shadow-[0_-4px_20px_rgba(0,0,0,0.5)]">
-              {TABS.map(tab => (
-                <button
-                  key={tab.id}
-                  className={`flex flex-col items-center justify-center min-w-[64px] py-1 transition-colors ${activeTab === tab.id ? 'text-dnd-gold' : 'text-dnd-muted hover:text-white'}`}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  <span className="text-xl mb-1 drop-shadow-md">{tab.label.split(' ')[0]}</span>
-                  <span className="text-[9px] font-bold uppercase tracking-wider">{tab.label.substring(tab.label.indexOf(' ') + 1)}</span>
-                </button>
-              ))}
-            </nav>
-
-            {/* Mobile Floating Dice Button */}
-            <button
-              className="absolute bottom-[85px] right-4 w-14 h-14 bg-gradient-to-br from-dnd-red to-[#6b0f0f] text-white text-3xl rounded-full shadow-[0_0_15px_rgba(239,68,68,0.5)] flex items-center justify-center lg:hidden z-50 hover:scale-105 active:scale-95 transition-transform border-2 border-dnd-gold/50"
-              onClick={() => setShowMobileDice(!showMobileDice)}
-            >
-              🎲
-            </button>
-
-            {/* Mobile Dice Modal */}
-            {showMobileDice && (
-              <div className="absolute inset-x-4 bottom-[150px] bg-dnd-surface border border-dnd-red/50 rounded-xl shadow-2xl z-50 p-4 lg:hidden animate-in slide-in-from-bottom-4 duration-200">
-                <div className="flex justify-between items-center mb-4 border-b border-dnd-border pb-2">
-                  <h3 className="text-dnd-gold font-fantasy font-bold m-0 uppercase tracking-widest text-lg">Quick Roll</h3>
-                  <button onClick={() => setShowMobileDice(false)} className="text-dnd-muted hover:text-white drop-shadow-md text-xl">✕</button>
-                </div>
-                <DiceRoller characterName={selectedCharacter ? selectedCharacter.name : "Player"} />
-              </div>
-            )}
           </div>
         </>
       )}
@@ -364,6 +346,14 @@ function App() {
 
       {showRecapArchive && (
         <RecapArchive onClose={() => setShowRecapArchive(false)} />
+      )}
+
+      {showNpcManager && (
+        <NPCManager isDm={isDm} onClose={() => setShowNpcManager(false)} />
+      )}
+
+      {showLootManager && (
+        <LootManager isDm={isDm} party={party} onClose={() => setShowLootManager(false)} />
       )}
 
       {selectedCharacter && isDm && (
