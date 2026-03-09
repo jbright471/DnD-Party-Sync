@@ -10,6 +10,8 @@ A living document for the *DnD Party Sync* project, outlining upcoming features,
 
 ## ✅ Completed
 
+- [x] **Character Deletion Bug**: Fixed SQLite `id` overwrite issue when parsing character data.
+- [x] **Docker Build Dependencies**: Applied `--legacy-peer-deps` to resolve React 19 peer conflicts.
 - [x] **Phase 11.1: Character Deduplication**: Introduced `ddb_id` and import locking to prevent duplicate character creation.
 - [x] **Phase 8.3: Living Environments**: Looping video battlemaps (.mp4/.webm) with layered token support.
 - [x] **Phase 8.0: Multi-Level Maps**: Support for verticality (Floors/Levels) within a single Map entry.

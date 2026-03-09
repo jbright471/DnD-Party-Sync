@@ -4,6 +4,25 @@ All notable changes to the **DnD Party Sync** project will be documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.8.1] - 2026-03-09
+
+### Fixed
+- **🗑️ Character Deletion Bug**: Resolved an issue where characters imported from D&D Beyond could not be deleted from the party or database due to their remote DDB `id` overwriting the local SQLite `id` in the API payload.
+- **📦 Docker Build Pipeline**: Fixed an NPM peer dependency conflict (`react@19` vs `next-themes`) that was failing the `docker-compose` build by applying the `--legacy-peer-deps` flag to the Dockerfile.
+
+## [1.8.0] - 2026-03-03
+
+### Added
+- **✨ LLM Auto-Resolution**: Actions with "✨ Auto-Resolve with AI" enabled will now be parsed by the LLM and automatically adjust the target's HP, AC, Initiative, or Speed in real-time.
+- **🎯 Dynamic Target Selection**: Added a dedicated `TargetSelectionModal` to accurately capture intended targets before emitting action logs.
+- **Global Dice Roller FAB**: Replaced the static right-pane dice tray with a floating D20 action button. The new glassmorphic popover menu allows users to build and roll complex multi-dice pools (e.g., `2d20 + 1d6 + 4`) and broadcasts the total seamlessly to the table's Action Log.
+- **📱 Mobile-First Party Tracker**: The `PartySidebar` has been redesigned to collapse into a highly ergonomic, horizontally scrolling carousel on mobile devices, ensuring it doesn't consume valuable screen real estate.
+
+### Changed
+- **🎨 Dark Fantasy UX Overhaul**: Applied a Google Stitch-inspired redesign focusing on deep navy backgrounds, glassmorphism, and gold/amber accents.
+- **📊 Priority Stat Banners**: The `CharacterSheetView` now features a massive, gradient-backed Hit Point indicator, with prominently stylized Armor Class and Initiative blocks for immediate readability in the heat of battle.
+- **⚡ Combat Cards**: `CombatActions` tap targets were significantly enlarged for touch screens, transitioning to a premium dark gradient with neon-amber hover states to instantly highlight available actions.
+
 ## [1.7.1] - 2026-03-02
 
 ### Added

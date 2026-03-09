@@ -134,7 +134,7 @@ function getCharacterData(db, characterId) {
   if (char.data_json) {
     try {
       charData = JSON.parse(char.data_json);
-    } catch (_) {}
+    } catch (_) { }
   }
 
   const inventory = char.inventory ? JSON.parse(char.inventory) : [];
@@ -163,6 +163,7 @@ function getCharacterData(db, characterId) {
     backstory: char.backstory || charData.backstory || '',
     raw_dndbeyond_json: char.raw_dndbeyond_json,
     ...charData,
+    id: char.id, // Explicitly override id to prevent charData (like DDB JSON) from replacing the SQLite ID
   };
 }
 
@@ -293,36 +294,36 @@ function removeConditionEvent(db, characterId, condition) {
 }
 
 function applyBuffEvent(db, characterId, buffData) {
-    const char = getCharacterData(db, characterId);
-    const state = getSessionState(db, characterId);
-    if (!state || !char) return { success: false };
+  const char = getCharacterData(db, characterId);
+  const state = getSessionState(db, characterId);
+  if (!state || !char) return { success: false };
 
-    const newBuff = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `buff-${Date.now()}-${Math.random()}`,
-        name: buffData.name,
-        sourceName: buffData.sourceName || 'System',
-        isConcentration: !!buffData.isConcentration,
-        timestamp: new Date().toISOString()
-    };
+  const newBuff = {
+    id: crypto.randomUUID ? crypto.randomUUID() : `buff-${Date.now()}-${Math.random()}`,
+    name: buffData.name,
+    sourceName: buffData.sourceName || 'System',
+    isConcentration: !!buffData.isConcentration,
+    timestamp: new Date().toISOString()
+  };
 
-    state.activeBuffs.push(newBuff);
-    saveSessionState(db, state);
-    return { success: true, buff: newBuff, logMessage: `Applied ${buffData.name} to ${char.name}.` };
+  state.activeBuffs.push(newBuff);
+  saveSessionState(db, state);
+  return { success: true, buff: newBuff, logMessage: `Applied ${buffData.name} to ${char.name}.` };
 }
 
 function removeBuffEvent(db, characterId, buffId) {
-    const char = getCharacterData(db, characterId);
-    const state = getSessionState(db, characterId);
-    if (!state || !char) return { success: false };
+  const char = getCharacterData(db, characterId);
+  const state = getSessionState(db, characterId);
+  if (!state || !char) return { success: false };
 
-    const originalCount = state.activeBuffs.length;
-    state.activeBuffs = state.activeBuffs.filter(b => b.id !== buffId && b.name !== buffId);
-    
-    if (state.activeBuffs.length !== originalCount) {
-        saveSessionState(db, state);
-        return { success: true, logMessage: `Removed buff from ${char.name}.` };
-    }
-    return { success: false };
+  const originalCount = state.activeBuffs.length;
+  state.activeBuffs = state.activeBuffs.filter(b => b.id !== buffId && b.name !== buffId);
+
+  if (state.activeBuffs.length !== originalCount) {
+    saveSessionState(db, state);
+    return { success: true, logMessage: `Removed buff from ${char.name}.` };
+  }
+  return { success: false };
 }
 
 function useSpellSlotEvent(db, characterId, slotLevel) {
