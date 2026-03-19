@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { generateLoreLLM } = require('../ollama');
+const { generateLoreLLM, generateWeatherLLM } = require('../ollama');
 
 // GET /api/world/state
 router.get('/state', (req, res) => {
@@ -54,31 +54,17 @@ router.post('/advance-time', (req, res) => {
     }
 });
 
-// POST /api/world/weather — Generate new weather
+// POST /api/world/weather — Generate new weather via dedicated JSON-mode function
 router.post('/weather', async (req, res) => {
-    const { climate } = req.body; // e.g. "Coastal", "Arctic", "Desert"
-    
-    const systemPrompt = `You are a D&D 5e weather engine.
-Generate a weather condition for a ${climate || 'Temperate'} climate.
-Return ONLY JSON:
-{
-  "condition": "string (e.g. Heavy Rain, Blistering Heat)",
-  "impact": "Mechanical effect (e.g. Disadvantage on Perception)",
-  "flavor": "Short atmospheric description"
-}`;
+    const { climate } = req.body;
 
     try {
-        const response = await generateLoreLLM(systemPrompt);
-        let parsed;
-        try {
-            parsed = JSON.parse(response);
-        } catch (e) {
-            const cleaned = response.replace(/^```json/g, '').replace(/```$/g, '').trim();
-            parsed = JSON.parse(cleaned);
+        const weather = await generateWeatherLLM(climate);
+        if (!weather) {
+            return res.status(502).json({ error: 'Ollama failed to generate weather. Is it running?' });
         }
-
-        db.prepare('UPDATE campaign_state SET value = ? WHERE key = "current_weather"').run(JSON.stringify(parsed));
-        res.json(parsed);
+        db.prepare('UPDATE campaign_state SET value = ? WHERE key = "current_weather"').run(JSON.stringify(weather));
+        res.json(weather);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

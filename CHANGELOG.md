@@ -4,6 +4,18 @@ All notable changes to the **DnD Party Sync** project will be documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.9.0] - 2026-03-18
+
+### Added
+- **🗣️ Prompt Engineering Upgrade**: Rewrote all LLM system prompts from basic stubs into detailed, structured schema guidelines for significantly higher quality generation (especially for Homebrew Stats, Loot, and Session Recaps).
+
+### Changed
+- **🧠 AI Core Refactor (Ollama)**: Completely overhauled the LLM integration layer (`ollama.js`). Unified all fetch requests through a shared `ollamaRequest()` helper featuring configurable retry logic, `AbortController` timeouts (preventing infinite hangs), and a multi-strategy JSON extraction parser (`cleanLlmJson()`).
+
+### Fixed
+- **🛡️ Character Validation Hardening**: The AI validation engine (`validator.js`) now auto-corrects common LLM hallucinations (e.g., mapping \`character_name\` → \`name\`, \`race\` → \`species\`), strictly enforces AC ranges (1–30), flags duplicate skills, and warns on empty inventories.
+- **⛈️ Weather Engine Stability**: Migrated the world weather generation endpoint in `world.js` to a dedicated JSON-formatted LLM function, eliminating unstable regex-based parsing that frequently crashed the endpoint.
+
 ## [1.8.1] - 2026-03-09
 
 ### Fixed

@@ -2,16 +2,26 @@
 
 A living document for the *DnD Party Sync* project, outlining upcoming features, bug fixes, and architectural optimizations.
 
-## 🔜 Current Sprint: Advanced Integrations (Phase 11.0)
+## 🔜 Current Sprint: Phase 12.1 — Polish & Expansion
 
-- [ ] **World Map (Global Overworld)**: A high-level map linking multiple battlemaps with fast-travel markers.
-- [ ] **Voice Integration**: Proximity-based chat using WebRTC.
-- [ ] **Mobile App Wrapper**: Capacitor/React Native wrapper for a true native feeling on mobile devices.
+- [ ] **Voice Proximity (Auto-Volume)**: Auto-adjust peer volume based on token distance on the active battlemap (builds on Phase 11 voice groundwork).
+- [ ] **World Map: Replace Overworld**: Allow the DM to swap the world map image without losing existing markers.
+- [ ] **Push Notifications**: Capacitor local notifications for DM whispers and turn alerts when the app is backgrounded.
+- [ ] **Saving Throws in Automation**: Allow presets to specify a save (type + DC). Server holds the effect pending; players roll and report pass/fail before the effect commits.
+- [ ] **Automation: Spatial Aura Radius**: Auto-resolve targets within N grid squares using battlemap token positions (currently manual target selection).
 
 ## ✅ Completed
 
+- [x] **Phase 12.2: AI Logic Refactor**: Complete overhaul of the Ollama integration layer (\`ollama.js\`). Extracted shared request/retry/timeout logic. Hardened JSON parsing with multi-strategy fallback. Upgraded all system prompts to enforce strict schemas. Improved character validation to auto-correct common LLM key mistakes.
 - [x] **Character Deletion Bug**: Fixed SQLite `id` overwrite issue when parsing character data.
 - [x] **Docker Build Dependencies**: Applied `--legacy-peer-deps` to resolve React 19 peer conflicts.
+- [x] **Phase 12.0: Party Effect Engine**: `effectEngine.js` — deterministic, transactional multi-target effect processor. Handles characters (rulesIntegration) and monsters (initiative_tracker) with distinct code paths. Every applied effect writes an immutable row to `effect_events`.
+- [x] **Phase 12.0: DM Automation Panel**: `DmAutomationPanel.tsx` — three-tab dialog (Group Strike inline builder, Saved Macros with CRUD + Fire, Aura Manager). Turn-trigger and aura presets auto-fire on `next_turn` via server-side hooks.
+- [x] **Phase 12.0: Combat Effect Timeline**: `EffectTimeline.tsx` — collapsible panel showing round-grouped, colour-coded event history. Source-tagged (manual / automation / aura). Real-time via `timeline_update` socket. Filter + clear controls.
+- [x] **Phase 12.0: Condition & Aura Automation Presets**: Full aura definition with name, trigger phase, radius (noted), target mode, and effect list. Stored in `automation_presets` table, processed by `processAurasForTurn()` each turn.
+- [x] **Phase 11.0: World Map (Global Overworld)**: Interactive overworld map with SVG marker overlay, DM-controlled discovery/visibility, fast-travel to battlemaps, and Socket.io live sync.
+- [x] **Phase 11.0: Voice Chat (WebRTC)**: Mesh WebRTC voice channel with speaking detection, per-peer volume sliders, mute/deafen, and floating FAB widget.
+- [x] **Phase 11.0: Mobile App Wrapper (Capacitor)**: `capacitor.config.ts`, `cap:android`/`cap:ios` build scripts, environment-variable server URL for homelab LAN connections, and Capacitor-optimised Vite build mode.
 - [x] **Phase 11.1: Character Deduplication**: Introduced `ddb_id` and import locking to prevent duplicate character creation.
 - [x] **Phase 8.3: Living Environments**: Looping video battlemaps (.mp4/.webm) with layered token support.
 - [x] **Phase 8.0: Multi-Level Maps**: Support for verticality (Floors/Levels) within a single Map entry.

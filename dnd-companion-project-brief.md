@@ -31,12 +31,12 @@ The app is split into two distinct experiences:
 - **SQLite** via better-sqlite3 for persistent state.
 
 ### LLM Layer
-- **Ollama** (Gemma3:27b)
-- Used for PDF extraction, item parsing, creative lore generation, and real-time rules assistance.
+- **Ollama** (mistral-small:24b)
+- Used for PDF extraction, item parsing, creative lore generation, and real-time rules assistance. Features robust multi-strategy JSON extraction, request timeouts, and auto-correcting validation to safely bridge raw LLM outputs into strictly-typed game mechanics.
 
 ---
 
-## Completed Architecture (Phase 6.0)
+## Completed Architecture (Phase 12.0+)
 
 ### 🎮 DM Orchestrator
 - **Master Overrides:** One-click HP and condition management for all players.
