@@ -10,7 +10,7 @@
 
 import pdfParse from 'pdf-parse';
 import { v4 as uuidv4 } from 'uuid';
-import type { Character } from '../types/character';
+import type { Character } from './character';
 
 // ---------------------------------------------------------------------------
 // STEP 1: Extract raw text from the PDF buffer
@@ -307,7 +307,7 @@ export async function parsePdfToCharacter(
 // empty session state. Call this when a GM adds a character to a session.
 // ---------------------------------------------------------------------------
 
-import type { SessionState } from '../types/character';
+import type { SessionState } from './character';
 
 export function createInitialSessionState(
   character: Character,

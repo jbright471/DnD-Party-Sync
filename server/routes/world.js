@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { generateLoreLLM, generateWeatherLLM } = require('../ollama');
+const { generateWeatherLLM } = require('../ollama');
 
 // GET /api/world/state
 router.get('/state', (req, res) => {

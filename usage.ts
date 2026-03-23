@@ -7,7 +7,7 @@
 
 import fs from 'fs';
 import Anthropic from '@anthropic-ai/sdk';
-import { parsePdfToCharacter } from '../lib/parsePdfToCharacter';
+import { parsePdfToCharacter } from './parsePdfToCharacter';
 
 // ---------------------------------------------------------------------------
 // A) Anthropic Claude API

@@ -3,146 +3,94 @@ const router = express.Router();
 const fetch = require('node-fetch');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
-const fs = require('fs');
-const path = require('path');
-const { exec } = require('child_process');
-const util = require('util');
-const execAsync = util.promisify(exec);
 const db = require('../db');
 const { parseCharacterPdfLLM } = require('../ollama');
-const { createInitialSessionState } = require('../lib/models');
 
 const upload = multer({ storage: multer.memoryStorage() });
-
-// In-memory lock to prevent concurrent imports for the same character ID
-const activeImports = new Set();
-
-// GET /api/characters/import/diag — diagnostic endpoint
-router.get('/diag', async (req, res) => {
-    const diag = {
-        pdftotext: false,
-        ollama: false,
-        ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
-        tempDirWritable: false
-    };
-
-    try {
-        const { stdout } = await execAsync('pdftotext -v');
-        diag.pdftotext = true;
-    } catch (e) { diag.pdftotext_error = e.message; }
-
-    try {
-        const response = await fetch(`${diag.ollamaUrl}/api/tags`, { timeout: 3000 });
-        diag.ollama = response.ok;
-        diag.ollama_status = response.status;
-    } catch (e) { diag.ollama_error = e.message; }
-
-    try {
-        const tempDir = path.join(__dirname, '../../tmp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-        const testFile = path.join(tempDir, '.test_write');
-        fs.writeFileSync(testFile, 'test');
-        fs.unlinkSync(testFile);
-        diag.tempDirWritable = true;
-    } catch (e) { diag.tempDirError = e.message; }
-
-    res.json(diag);
-});
 
 /**
  * POST /api/characters/import
  */
 router.post('/', async (req, res) => {
     const { url } = req.body;
-    console.log(`[Importer] URL Import Request: ${url}`);
-
-    if (!url) {
-        return res.status(400).json({ error: 'A D&D Beyond character URL is required.' });
-    }
+    if (!url) return res.status(400).json({ error: 'A D&D Beyond character URL is required.' });
 
     const match = url.match(/\/characters\/(\d+)/);
-    if (!match) {
-        return res.status(400).json({ error: 'Invalid D&D Beyond URL. Please use the full character URL.' });
-    }
+    if (!match) return res.status(400).json({ error: 'Invalid D&D Beyond URL.' });
 
     const characterId = match[1];
-    
-    // Concurrent request lock
-    if (activeImports.has(characterId)) {
-        console.warn(`[Importer] Import already in progress for DDB ID: ${characterId}`);
-        return res.status(409).json({ error: 'An import for this character is already in progress. Please wait.' });
-    }
-
-    // Deduplication check: see if this ddb_id already exists in our DB
-    try {
-        const existing = db.prepare("SELECT id, name FROM characters WHERE ddb_id = ?").get(characterId);
-        if (existing) {
-            console.log(`[Importer] Character ${existing.name} (DDB ID: ${characterId}) already exists. Returning existing record.`);
-            return res.status(200).json(existing);
-        }
-    } catch (e) {
-        console.warn(`[Importer] Deduplication check failed (falling back to LIKE check): ${e.message}`);
-        // Fallback for older entries without ddb_id
-        const existing = db.prepare("SELECT id, name FROM characters WHERE raw_dndbeyond_json LIKE ?").get(`%"id":${characterId},%`);
-        if (existing) return res.status(200).json(existing);
-    }
-
-    activeImports.add(characterId);
-
-    // Hardened headers to bypass basic scraping blocks
     const BROWSER_HEADERS = {
         'Accept': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.dndbeyond.com/',
-        'Origin': 'https://www.dndbeyond.com'
     };
 
     try {
         const apiUrl = `https://character-service.dndbeyond.com/character/v5/character/${characterId}`;
-        const response = await fetch(apiUrl, { headers: BROWSER_HEADERS, timeout: 10000 });
+        const response = await fetch(apiUrl, { headers: BROWSER_HEADERS });
 
-        if (response.ok) {
-            const json = await response.json();
-            if (json.data) {
-                const character = parseCharacterData(json.data);
-                const newChar = insertCharacter(character);
+        if (!response.ok) throw new Error(`DDB returned ${response.status}`);
+        const json = await response.json();
+        if (!json.data) throw new Error('No data in DDB response');
 
-                // Initialize session state for the newly imported character
-                try {
-                    const sessionState = {
-                        sessionId: "ddb-import-" + Date.now(),
-                        currentHp: character.currentHp,
-                        tempHp: 0,
-                        deathSaves: { successes: 0, failures: 0 },
-                        activeConditions: [],
-                        activeBuffs: [],
-                        concentratingOn: null,
-                        spellSlotsUsed: {},
-                        hitDiceUsed: {},
-                        featureUses: {},
-                        activeFeatures: []
-                    };
-                    insertSessionState(newChar.id, sessionState);
-                    console.log(`[Importer] Initialized session state for ${newChar.name}`);
-                } catch (stateErr) {
-                    console.error(`[Importer] Failed to initialize session state: ${stateErr.message}`);
-                }
+        const character = parseCharacterData(json.data);
+        const newChar = insertCharacter(character);
+        
+        // Init session state
+        db.prepare(`
+          INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
+          VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
+        `).run(newChar.id, newChar.current_hp);
 
-                activeImports.delete(characterId);
-                return res.status(201).json(newChar);
-            }
-        } else {
-            console.warn(`[Importer] DDB API responded with status: ${response.status}`);
-        }
+        res.status(201).json(newChar);
     } catch (err) {
-        console.error(`[Importer] Import Error: ${err.message}`);
-    } finally {
-        activeImports.delete(characterId);
+        res.status(500).json({ error: err.message });
     }
+});
 
-    return res.status(502).json({
-        error: 'D&D Beyond is blocking automated access. Ensure character is PUBLIC and try again later.'
-    });
+/**
+ * PUT /api/characters/:id/sync
+ */
+router.put('/:id/sync', async (req, res) => {
+    const { id } = req.params;
+    const { url } = req.body;
+
+    if (!url) return res.status(400).json({ error: 'URL required for sync' });
+
+    const match = url.match(/\/characters\/(\d+)/);
+    if (!match) return res.status(400).json({ error: 'Invalid URL format' });
+
+    const characterId = match[1];
+    const BROWSER_HEADERS = {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+
+    try {
+        const apiUrl = `https://character-service.dndbeyond.com/character/v5/character/${characterId}`;
+        const response = await fetch(apiUrl, { headers: BROWSER_HEADERS });
+
+        if (!response.ok) throw new Error(`D&D Beyond returned ${response.status}`);
+        const json = await response.json();
+        if (!json.data) throw new Error('No data in D&D Beyond response');
+
+        const parsed = parseCharacterData(json.data);
+        
+        db.prepare(`
+            UPDATE characters SET
+                name = ?, class = ?, level = ?, max_hp = ?, ac = ?,\n                stats = ?, skills = ?, features = ?, features_traits = ?,\n                inventory = ?, spells = ?, backstory = ?,\n                raw_dndbeyond_json = ?, data_json = ?
+            WHERE id = ?
+        `).run(
+            parsed.name, parsed.class, parsed.level, parsed.maxHp, parsed.ac,
+            parsed.stats, parsed.skills, parsed.features, parsed.features_traits,
+            parsed.inventory, parsed.spells, parsed.backstory,
+            parsed.raw_dndbeyond_json, parsed.data_json,
+            id
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /**
@@ -152,33 +100,18 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded.' });
 
     try {
-        const tempDir = path.join(__dirname, '../../tmp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-        const tempPath = path.join(tempDir, `import_${Date.now()}.pdf`);
-        fs.writeFileSync(tempPath, req.file.buffer);
-
-        let rawText = "";
-        try {
-            // Priority: pdftotext -layout (best for DDB sheets)
-            const { stdout } = await execAsync(`pdftotext -layout "${tempPath}" -`);
-            rawText = stdout;
-        } catch (execErr) {
-            console.warn('[Importer] pdftotext failed, falling back to pdf-parse');
-            const pdfData = await pdfParse(req.file.buffer);
-            rawText = pdfData.text;
-        } finally {
-            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-        }
+        const pdfData = await pdfParse(req.file.buffer);
+        const rawText = pdfData.text;
 
         const parsed = await parseCharacterPdfLLM(rawText);
-        if (!parsed || !parsed.name) throw new Error('AI failed to extract character data from PDF.');
+        if (!parsed || !parsed.name) throw new Error('AI failed to extract character data.');
 
         const classStr = (parsed.classes || []).map(c => `${c.name} ${c.level}`).join(' / ') || 'Unknown';
         const totalLevel = (parsed.classes || []).reduce((sum, c) => sum + (c.level || 0), 0) || 1;
 
-        const character = {
+        const charObj = {
             name: parsed.name,
-            class: classStr, // Matches DB column 'class'
+            class: classStr,
             level: totalLevel,
             maxHp: parsed.baseMaxHp || 10,
             currentHp: parsed.baseMaxHp || 10,
@@ -186,28 +119,27 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
             stats: JSON.stringify(parsed.abilityScores || {}),
             skills: JSON.stringify(parsed.skills || []),
             inventory: JSON.stringify(parsed.inventory || []),
-            homebrew_inventory: '[]',
             features: JSON.stringify(parsed.features || []),
-            features_traits: JSON.stringify(parsed.features || []),
             spells: JSON.stringify(parsed.spells || []),
             backstory: '',
             raw_dndbeyond_json: '', 
             data_json: JSON.stringify(parsed)
         };
 
-        const newChar = insertCharacter(character);
-        const sessionState = createInitialSessionState(parsed, "pdf-import-" + Date.now());
-        insertSessionState(newChar.id, sessionState);
+        const newChar = insertCharacter(charObj);
+        db.prepare(`
+          INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
+          VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
+        `).run(newChar.id, newChar.current_hp);
 
         res.status(201).json(newChar);
-
     } catch (err) {
-        console.error('[Importer] PDF Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// Helper: 5-step calculation for Ability Scores
+// --- Helpers ---
+
 function calculateAbilityScore(statId, statName, data) {
     const baseStat = data.stats?.find(s => s.id === statId)?.value || 10;
     let total = baseStat;
@@ -222,91 +154,13 @@ function calculateAbilityScore(statId, statName, data) {
     total += data.bonusStats?.find(s => s.id === statId)?.value || 0;
     const override = data.overrideStats?.find(s => s.id === statId)?.value || null;
     if (override !== null) total = override;
-    const setMods = allMods.filter(m => m.type === 'set' && m.subType === statName);
-    let setMax = 0;
-    for (const mod of setMods) { if (mod.value > setMax) setMax = mod.value; }
-    if (setMax > total) total = setMax;
     return total;
 }
 
-function extractFeatures(data) {
-    const features = [];
-    if (data.classes) {
-        data.classes.forEach(cls => {
-            if (cls.classFeatures) {
-                cls.classFeatures.forEach(cf => {
-                    features.push({
-                        name: cf.definition.name,
-                        description: cf.definition.description,
-                        source: cls.definition.name
-                    });
-                });
-            }
-        });
-    }
-    if (data.race && data.race.racialTraits) {
-        data.race.racialTraits.forEach(rt => {
-            features.push({
-                name: rt.definition.name,
-                description: rt.definition.description,
-                source: data.race.fullName
-            });
-        });
-    }
-    return features;
-}
-
-function extractSpells(data) {
-    const spells = [];
-    if (data.classSpells) {
-        data.classSpells.forEach(cs => {
-            if (cs.spells) {
-                cs.spells.forEach(s => {
-                    spells.push({
-                        name: s.definition.name,
-                        level: s.definition.level,
-                        isConcentration: s.definition.concentration,
-                        description: s.definition.description
-                    });
-                });
-            }
-        });
-    }
-    return spells;
-}
-
-function extractSkills(data) {
-    const skills = [];
-    const skillList = [
-        'Acrobatics', 'Animal Handling', 'Arcana', 'Athletics', 'Deception',
-        'History', 'Insight', 'Intimidation', 'Investigation', 'Medicine',
-        'Nature', 'Perception', 'Performance', 'Persuasion', 'Religion',
-        'Sleight of Hand', 'Stealth', 'Survival'
-    ];
-    
-    let allMods = [];
-    if (data.modifiers) {
-        Object.values(data.modifiers).forEach(modArray => {
-            if (Array.isArray(modArray)) allMods = allMods.concat(modArray);
-        });
-    }
-
-    skillList.forEach(s => {
-        const subType = s.toLowerCase().replace(/ /g, '-');
-        const isProf = allMods.some(m => m.type === 'proficiency' && m.subType === subType);
-        if (isProf) skills.push(s);
-    });
-
-    return skills;
-}
-
 function parseCharacterData(data) {
-    const name = data.name || data.characterName || 'Unknown Adventurer';
-    let charClass = 'Adventurer';
-    if (data.classes && data.classes.length > 0) {
-        charClass = data.classes.map(c => c.definition?.name || c.name || 'Unknown').join(' / ');
-    }
-    const level = data.classes ? data.classes.reduce((sum, c) => sum + (c.level || 0), 0) : (data.level || 1);
+    const name = data.name || 'Unknown';
+    const charClass = data.classes?.map(c => c.definition?.name).join(' / ') || 'Adventurer';
+    const level = data.classes?.reduce((sum, c) => sum + (c.level || 0), 0) || 1;
     
     const str = calculateAbilityScore(1, 'strength-score', data);
     const dex = calculateAbilityScore(2, 'dexterity-score', data);
@@ -317,8 +171,8 @@ function parseCharacterData(data) {
 
     const baseHp = data.baseHitPoints || 10;
     const conBonus = Math.floor((con - 10) / 2);
-    const maxHp = data.overrideHitPoints || Math.max(1, baseHp + (conBonus * level) + (data.bonusHitPoints || 0));
-    const currentHp = Math.max(0, maxHp - (data.removedHitPoints || 0));
+    const maxHp = data.overrideHitPoints || (baseHp + (conBonus * level));
+    const currentHp = maxHp - (data.removedHitPoints || 0);
     const ac = data.armorClass || (10 + Math.floor((dex - 10) / 2));
 
     const statsObj = { STR: str, DEX: dex, CON: con, INT: int, WIS: wis, CHA: cha };
@@ -328,32 +182,17 @@ function parseCharacterData(data) {
         quantity: i.quantity, 
         equipped: i.equipped, 
         type: i.definition.filterType, 
-        isAttuned: i.isAttuned,
         description: i.definition.description
     }));
 
-    const features = extractFeatures(data);
-    const spells = extractSpells(data);
-    const skills = extractSkills(data);
-
-    const spellSlots = {};
-    if (data.spellSlots) {
-        data.spellSlots.forEach((slot, idx) => {
-            if (slot.available > 0) spellSlots[idx + 1] = slot.available;
-        });
-    }
-
     return {
         name, class: charClass, level, maxHp, currentHp, ac,
-        ddb_id: data.id || null,
         stats: JSON.stringify(statsObj),
-        skills: JSON.stringify(skills),
-        features: JSON.stringify(features),
-        features_traits: JSON.stringify(features),
+        skills: JSON.stringify([]),
+        features: JSON.stringify([]),
+        features_traits: JSON.stringify([]),
         inventory: JSON.stringify(inventory),
-        homebrew_inventory: '[]',
-        spells: JSON.stringify(spells),
-        spellSlots: JSON.stringify(spellSlots),
+        spells: JSON.stringify([]),
         backstory: data.notes?.backstory || '',
         raw_dndbeyond_json: JSON.stringify(data),
         data_json: JSON.stringify(data)
@@ -361,58 +200,21 @@ function parseCharacterData(data) {
 }
 
 function insertCharacter(charObj) {
-    const name = charObj.name;
-    const charClass = charObj.class || charObj.charClass || 'Adventurer';
-    const level = charObj.level || 1;
-    const max_hp = charObj.maxHp || charObj.max_hp || 10;
-    const current_hp = charObj.currentHp || charObj.current_hp || max_hp;
-    const ac = charObj.ac || 10;
-    const ddb_id = charObj.ddb_id || null;
-    
-    const stats = charObj.stats || '{}';
-    const skills = charObj.skills || '[]';
-    const features = charObj.features || '[]';
-    const features_traits = charObj.features_traits || '[]';
-    const inventory = charObj.inventory || '[]';
-    const homebrew_inventory = charObj.homebrew_inventory || '[]';
-    const spells = charObj.spells || '[]';
-    const spell_slots = charObj.spellSlots || '{}';
-    const backstory = charObj.backstory || '';
-    const raw_dndbeyond_json = charObj.raw_dndbeyond_json || '';
-    const data_json = charObj.data_json || '{}';
-
     const stmt = db.prepare(`
         INSERT INTO characters (
-            name, class, level, max_hp, current_hp, ac, ddb_id,
-            stats, skills, features, features_traits, inventory, homebrew_inventory, spells, spell_slots, backstory, 
+            name, class, level, max_hp, current_hp, ac,
+            stats, skills, features, features_traits, inventory, homebrew_inventory, spells, backstory, 
             raw_dndbeyond_json, data_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)
     `);
     
     const result = stmt.run(
-        name, charClass, level, max_hp, current_hp, ac, ddb_id,
-        stats, skills, features, features_traits, inventory, homebrew_inventory, spells, spell_slots, backstory,
-        raw_dndbeyond_json, data_json
+        charObj.name, charObj.class, charObj.level, charObj.maxHp, charObj.currentHp, charObj.ac,
+        charObj.stats, charObj.skills, charObj.features, charObj.features_traits, charObj.inventory,
+        charObj.spells, charObj.backstory, charObj.raw_dndbeyond_json, charObj.data_json
     );
     
     return db.prepare('SELECT * FROM characters WHERE id = ?').get(result.lastInsertRowid);
-}
-
-function insertSessionState(characterId, state) {
-    const stmt = db.prepare(`
-        INSERT OR REPLACE INTO session_states (
-            character_id, session_id, current_hp, temp_hp, 
-            death_saves_json, conditions_json, buffs_json, 
-            concentrating_on, slots_used_json, hd_used_json, 
-            feature_uses_json, active_features_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-        characterId, state.sessionId, state.currentHp, state.tempHp,
-        JSON.stringify(state.deathSaves), JSON.stringify(state.activeConditions), JSON.stringify(state.activeBuffs),
-        state.concentratingOn, JSON.stringify(state.spellSlotsUsed), JSON.stringify(state.hitDiceUsed),
-        JSON.stringify(state.featureUses), JSON.stringify(state.activeFeatures)
-    );
 }
 
 module.exports = router;

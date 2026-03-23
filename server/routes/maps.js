@@ -24,6 +24,31 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/maps/active
+// GET /api/maps/overworld — Return the designated world map with all markers
+router.get('/overworld', (req, res) => {
+    try {
+        const map = db.prepare('SELECT * FROM maps WHERE is_overworld = 1').get();
+        if (!map) return res.json(null);
+
+        const markers = db.prepare('SELECT * FROM map_markers WHERE parent_map_id = ?').all(map.id);
+        const map_url = map.image_path ? `/api/maps/file/${path.basename(map.image_path)}` : null;
+        res.json({ ...map, map_url, markers });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/maps/:id/set-overworld — Designate one map as the world overworld
+router.post('/:id/set-overworld', (req, res) => {
+    try {
+        db.prepare('UPDATE maps SET is_overworld = 0').run();
+        db.prepare('UPDATE maps SET is_overworld = 1 WHERE id = ?').run(req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 router.get('/active', (req, res) => {
     try {
         const map = db.prepare('SELECT * FROM maps WHERE is_active = 1').get();
@@ -60,7 +85,7 @@ function saveMapFile(name, data, suffix = '') {
     const match = data.match(/^data:(image|video)\/(\w+);base64,/);
     if (!match) throw new Error('Invalid data format');
     
-    const type = match[1]; // image or video
+    const _type = match[1]; // image or video
     const ext = match[2] === 'mpeg' ? 'mp4' : match[2];
     const base64Data = data.replace(/^data:(image|video)\/\w+;base64,/, "");
     
@@ -126,12 +151,12 @@ router.post('/:id/activate', (req, res) => {
 // ---- Overworld Markers ----
 
 router.post('/:id/markers', (req, res) => {
-    const { name, type, x, y, linked_map_id } = req.body;
+    const { name, type, x, y, linked_map_id, description } = req.body;
     try {
         const result = db.prepare(`
-            INSERT INTO map_markers (parent_map_id, linked_map_id, name, type, x, y)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(req.params.id, linked_map_id || null, name, type || 'location', x, y);
+            INSERT INTO map_markers (parent_map_id, linked_map_id, name, type, x, y, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(req.params.id, linked_map_id || null, name, type || 'location', x, y, description || '');
         res.status(201).json({ id: result.lastInsertRowid });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -139,7 +164,7 @@ router.post('/:id/markers', (req, res) => {
 });
 
 router.patch('/markers/:markerId', (req, res) => {
-    const { is_discovered, is_hidden, x, y } = req.body;
+    const { is_discovered, is_hidden, x, y, name, type, linked_map_id, description } = req.body;
     try {
         const updates = [];
         const values = [];
@@ -147,9 +172,13 @@ router.patch('/markers/:markerId', (req, res) => {
         if (is_hidden !== undefined) { updates.push('is_hidden = ?'); values.push(is_hidden); }
         if (x !== undefined) { updates.push('x = ?'); values.push(x); }
         if (y !== undefined) { updates.push('y = ?'); values.push(y); }
-        
+        if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+        if (type !== undefined) { updates.push('type = ?'); values.push(type); }
+        if (linked_map_id !== undefined) { updates.push('linked_map_id = ?'); values.push(linked_map_id); }
+        if (description !== undefined) { updates.push('description = ?'); values.push(description); }
+
         if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
-        
+
         values.push(req.params.markerId);
         db.prepare(`UPDATE map_markers SET ${updates.join(', ')} WHERE id = ?`).run(...values);
         res.json({ success: true });

@@ -163,7 +163,7 @@ const KNOWN_CONCENTRATION_SPELLS = new Set([
 // ---------------------------------------------------------------------------
 
 function resolveDamage(currentState, rawDamage, damageType = 'untyped', resistances = [], immunities = [], vulnerabilities = [], activeConditions = []) {
-  const { currentHp, tempHp = 0, maxHp } = currentState;
+  const { currentHp, tempHp = 0, maxHp: _maxHp } = currentState;
   const type = damageType.toLowerCase().trim();
 
   if (immunities.map(i => i.toLowerCase()).includes(type)) {
@@ -255,7 +255,7 @@ function resolveFinalAbilityScores(character, allInventory = []) {
   return final;
 }
 
-function resolveCurrentAC(character, activeBuffs = [], activeConditions = [], allInventory = []) {
+function resolveCurrentAC(character, activeBuffs = [], _activeConditions = [], allInventory = []) {
   const scores = resolveFinalAbilityScores(character, allInventory);
   const dexMod = getAbilityModifier(scores.DEX || 10);
   const wisMod = getAbilityModifier(scores.WIS || 10);

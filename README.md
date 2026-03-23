@@ -1,37 +1,37 @@
-# DnD Party Sync
+# Arcane Ally — DnD Party Sync (Unified)
 
-A containerized, real-time companion application for managing D&D campaigns, combat encounters, and character sheets. Built around a dark fantasy aesthetic and specifically designed with a skill-first architectural approach to synchronize DMs and Players seamlessly.
+A high-performance, containerized companion application for D&D 5e. This project merges the beautiful UI of *Dungeon Automaton* with the robust, local-first backend and rules engine of *DnD Party Sync*.
 
-> *Scribe the chronicles, roll the bones, and sync the party.*
+## 🚀 The Stack
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, Radix UI.
+- **Backend:** Node.js (Express), Socket.io (Real-time Sync), Better-SQLite3.
+- **AI Layer:** Local Ollama integration for PDF parsing and item passive extraction.
+- **Deployment:** Docker & Docker Compose (Optimized for Portainer).
 
-## Architecture
+## ✨ Key Features
+- **Real-time Synchronization:** Every HP change, condition, and dice roll is broadcasted instantly to the entire party.
+- **Advanced 5e Rules Engine & Automations:** Automatic AC calculation, alongside a real-time Party Effect Engine that manages auras, group strikes, and conditions on a combat timeline.
+- **Interactive World Map & Voice:** Shared overworld with DM-controlled discovery and built-in WebRTC voice communication.
+- **AI-Powered Gear:** Forge homebrew items and let the AI "extract" mechanics directly from the description.
+- **D&D Beyond Integration:** Import characters via PDF or URL and re-sync without losing local homebrew modifications.
+- **Cross-Platform:** Available as a web app optimized for desktop, and packaged as a native mobile app via Capacitor.
 
-**Frontend:** React (Vite) + Tailwind CSS + Socket.io-client
-**Backend:** Node.js + Express + Socket.io
-**Logic:** 5e Rules Engine (`rulesEngine.js`) for automated math & gear passives
-**Database:** SQLite (`better-sqlite3`) with persistent Session States & Homebrew Inventory
-**Deployment:** Docker + Portainer + Cloudflare Tunnels (Optimized for Local SSD)
-**AI Integration:** Local Ollama API (`gemma3:27b`) for creative lore, item parsing, and PDF extraction
+## 🛠️ Self-Hosting (Portainer / Docker)
+The project is built to run entirely on your local hardware with no external cloud dependencies (Supabase has been removed).
 
-## Features
+1. **Environmental Config:**
+   Ensure your `.env` file points to your local Ollama instance:
+   ```env
+   OLLAMA_URL=http://your-ip:11434
+   ```
 
-- **🎮 DM Command Center:** PIN-secured orchestrator dashboard with God-Eye party views and master stat overrides.
-- **🎲 Animated Dice Tray:** Real-time synchronized dice rolling with physics-inspired animations and D&D math.
-- **👹 Combat Commander:** Pre-built encounter library and on-the-fly monster spawning with initiative integration.
-- **🌫️ Combat Fog of War:** Hide/Reveal combatants and obscure monster HP (Ghosting) for players.
-- **🔮 Creative AI Lore Master:** Dedicated creative console for generating evocative room descriptions, NPCs, and loot.
-- **🔄 Deduplicated Character Sync:** High-speed import from D&D Beyond URLs with automatic deduplication, concurrency locking, and instant session state initialization.
-- **🛡️ Equipment Manager:** Equip/Unequip items in real-time with automatic stat recalculation.
-- **🪄 Spellcasting Layer:** Interactive spell slot tracking and active concentration management.
-- **🔄 Hybrid Sync Engine:** Re-sync with D&D Beyond while preserving local homebrew items and buffs.
-- **🎲 Interactive Dice Intelligence:** Click any Stat or Skill on the character sheet to instantly roll with correct modifiers, advantage, and proficiency.
-- **📊 Advanced Party Dashboard:** Mobile-first Tailwind UI with animated HP bars and status indicators.
+2. **Launch:**
+   ```bash
+   docker-compose up --build -d
+   ```
 
-## Setup & Deployment
-
-1. Clone the repository.
-2. Initialize `docker compose up --build -d`.
-3. The Vite frontend runs on port `5173` and the Express backend runs on `3001` (accessible via proxy `3002` externally).
-4. For AI integrations, ensure the local Ollama instance URL is correctly mapped in your environment files (defaulting to port `11436` for Tesla P40 optimization).
-
-*Refer to the /server and /client directories for specific `npm` commands during development.*
+## 📂 Project Structure
+- `/client`: The TypeScript React frontend.
+- `/server`: The Node.js backend & Rules Engine.
+- `/data`: SQLite database persistence.
+- `/files`: Legacy logic snapshots and integration guides.

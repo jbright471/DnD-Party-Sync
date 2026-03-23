@@ -20,6 +20,17 @@ const db = require('./db');
 const { askRulesAssistant, resolveActionLLM, generateSessionRecap, generateLoreLLM } = require('./ollama');
 const { backupDatabase } = require('./backup');
 const cron = require('node-cron');
+const automationRouter = require('./routes/automation');
+const dmNotesRouter = require('./routes/dmNotes');
+const {
+    applyPartyEffect,
+    processTurnTriggers,
+    processAurasForTurn,
+    getCombatTimeline,
+    getFilteredTimeline,
+    clearTimeline,
+    writeConcentrationCheckEvent,
+} = require('./lib/effectEngine');
 
 const {
     applyDamageEvent,
@@ -35,11 +46,14 @@ const {
     getResolvedCharacterState,
     getSessionState,
     saveSessionState,
+    getCharacterData,
     applyBuffEvent,
     removeBuffEvent
 } = require('./lib/rulesIntegration');
 
 function applyEffect(effect) {
+    if (!effect.characterId) return { success: false, error: 'No characterId provided' };
+
     if (effect.type === 'hp') {
         if (effect.delta < 0) {
             return applyDamageEvent(db, effect.characterId, Math.abs(effect.delta), effect.damageType || 'untyped');
@@ -64,13 +78,16 @@ function applyEffect(effect) {
         if (updates.spell_slots) {
             const state = getSessionState(db, characterId);
             if (state) {
-                state.spellSlotsUsed = updates.spell_slots;
+                state.spellSlotsUsed = { ...state.spellSlotsUsed, ...updates.spell_slots };
                 saveSessionState(db, state);
             }
         }
         return { success: true, logMessage: 'Character updated via AI' };
     }
-    return { success: false, error: 'Unknown effect type' };
+    if (effect.type === 'buff') {
+        return applyBuffEvent(db, effect.characterId, effect.buffData);
+    }
+    return { success: false, error: `Unknown effect type: ${effect.type}` };
 }
 
 // --- Bootstrap ---
@@ -101,17 +118,28 @@ app.use('/api/quests', questsRouter);
 app.use('/api/world', worldRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/homebrew', homebrewRouter);
+app.use('/api/automation', automationRouter);
+app.use('/api/dm-notes', dmNotesRouter);
 
-// New Auth Route
+// DM Auth — validates PIN and returns a session token stored in campaign_state
+const { randomUUID } = require('crypto');
 app.post('/api/auth/dm', (req, res) => {
     const { pin } = req.body;
     const masterPin = process.env.DM_PIN || '1234';
     if (pin === masterPin) {
-        res.json({ success: true });
+        const token = randomUUID();
+        db.prepare("INSERT OR REPLACE INTO campaign_state (key, value) VALUES ('dm_token', ?)").run(token);
+        res.json({ success: true, token });
     } else {
         res.status(401).json({ success: false, error: 'Invalid PIN' });
     }
 });
+
+function requireDm(token) {
+    if (!token) return false;
+    const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
+    return row && row.value === token;
+}
 
 app.get('/api/log', (req, res) => {
     const logs = db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all();
@@ -137,6 +165,30 @@ app.post('/api/chat', async (req, res) => {
     res.json({ answer });
 });
 
+app.get('/api/offline-bundle', (req, res) => {
+    try {
+        const { characterId } = req.query;
+        const bundle = { character: null, recentEffects: [], timestamp: new Date().toISOString() };
+        if (characterId) {
+            const char = getCharacterData(db, parseInt(characterId));
+            bundle.character = char;
+            bundle.recentEffects = getFilteredTimeline(db, { limit: 50, targetId: parseInt(characterId) });
+        }
+        res.set('Cache-Control', 'no-cache');
+        res.json(bundle);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/effect-timeline', (req, res) => {
+    try {
+        res.json(getCombatTimeline(db));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/recaps', (req, res) => {
     try {
         const recaps = db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all();
@@ -149,6 +201,11 @@ app.get('/api/recaps', (req, res) => {
 // --- Global State ---
 let isApprovalMode = false;
 const playerSocketMap = new Map();
+const voiceRoom = new Map(); // socketId -> { characterId, playerName }
+
+// Combat round/turn tracking (reset on start/end encounter)
+let currentCombatRound = 0;
+let currentTurnIndex = 0;
 
 // --- Helpers ---
 function broadcastPartyState() {
@@ -200,7 +257,24 @@ function broadcastWorldState() {
             time: JSON.parse(time?.value || '{}'),
             weather: JSON.parse(weather?.value || '{}')
         });
-    } catch (e) {}
+    } catch (_e) {}
+}
+
+function broadcastTimeline() {
+    io.emit('timeline_update', getCombatTimeline(db));
+}
+
+function broadcastWorldMapState() {
+    try {
+        const map = db.prepare('SELECT * FROM maps WHERE is_overworld = 1').get();
+        if (map) {
+            const markers = db.prepare('SELECT * FROM map_markers WHERE parent_map_id = ?').all(map.id);
+            const map_url = map.image_path ? `/api/maps/file/${path.basename(map.image_path)}` : null;
+            io.emit('world_map_state', { ...map, map_url, markers });
+        } else {
+            io.emit('world_map_state', null);
+        }
+    } catch (e) { console.error('[WorldMap] Broadcast error:', e); }
 }
 
 function broadcastMapState() {
@@ -226,13 +300,32 @@ function logAction(actor, description, status = 'applied', effectsJson = null) {
 io.on('connection', (socket) => {
     console.log(`[Socket] Client connected: ${socket.id}`);
 
+    // DM room join — validates stored token before admitting to dm_room
+    socket.on('dm_join_room', ({ dmToken }) => {
+        if (requireDm(dmToken)) {
+            socket.join('dm_room');
+            socket.dmAuthenticated = true;
+            socket.emit('dm_room_joined', { success: true });
+        }
+    });
+
+    // Relay DM prep note mutations to dm_room so other DM tabs stay in sync
+    socket.on('relay_dm_note', ({ event, data }) => {
+        if (socket.dmAuthenticated) {
+            socket.to('dm_room').emit(event, data);
+        }
+    });
+
     broadcastPartyState();
     broadcastLogs();
     broadcastInitiative();
     broadcastNotes();
     broadcastMapState();
+    broadcastWorldMapState();
     broadcastWorldState();
     socket.emit('approval_mode', isApprovalMode);
+    socket.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+    socket.emit('timeline_update', getCombatTimeline(db));
 
     socket.on('log_action', async ({ actor, description, useLlm }, callback) => {
         if (!actor || !description) return callback?.({ success: false });
@@ -285,7 +378,7 @@ io.on('connection', (socket) => {
         broadcastPartyState();
     });
 
-    socket.on('update_hp', ({ characterId, delta, actor, damageType }) => {
+    socket.on('update_hp', ({ characterId, delta, actor, damageType, skipConcentrationAutoRoll }) => {
         if (isApprovalMode) {
             const char = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId);
             if (!char) return;
@@ -295,9 +388,35 @@ io.on('connection', (socket) => {
         }
         let result = delta < 0 ? applyDamageEvent(db, characterId, Math.abs(delta), damageType || 'untyped') : applyHealEvent(db, characterId, delta);
         if (result?.success) {
-            if (delta < 0 && result.concentrationCheck) {
+            if (delta < 0 && result.concentrationCheck && !skipConcentrationAutoRoll) {
                 const state = getSessionState(db, characterId);
-                io.emit('concentration_check_required', { characterId, spellName: state.concentratingOn, dc: result.concentrationCheck.dc });
+                const charData = getCharacterData(db, characterId);
+                const conScore = charData?.abilityScores?.CON ?? 10;
+                const conMod = Math.floor((conScore - 10) / 2);
+                const roll = Math.floor(Math.random() * 20) + 1;
+                const total = roll + conMod;
+                const dc = result.concentrationCheck.dc;
+                const passed = total >= dc;
+                const spellName = state?.concentratingOn ?? 'Unknown Spell';
+                const charName = charData?.name ?? `Character ${characterId}`;
+
+                writeConcentrationCheckEvent(
+                    db, characterId, charName, spellName,
+                    roll, conMod, total, dc, passed,
+                    currentCombatRound, currentTurnIndex
+                );
+
+                if (!passed) {
+                    dropConcentrationEvent(db, characterId);
+                    io.emit('concentration_broken', { characterId, characterName: charName, spellName, roll, total, dc });
+                } else {
+                    io.emit('concentration_maintained', { characterId, characterName: charName, spellName, roll, total, dc });
+                }
+                broadcastTimeline();
+            } else if (delta < 0 && result.concentrationCheck && skipConcentrationAutoRoll) {
+                // Manual roll mode — let client decide
+                const state = getSessionState(db, characterId);
+                io.emit('concentration_check_required', { characterId, spellName: state?.concentratingOn, dc: result.concentrationCheck.dc });
             }
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
@@ -380,7 +499,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('advance_time', ({ minutes }) => {
+    socket.on('advance_time', ({ minutes: _minutes }) => {
         // Logic handled in Rest API but for socket we can call it
         // Or just re-broadcast world state after an API call
         broadcastWorldState();
@@ -433,7 +552,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('dice_roll', ({ actor, sides, count, modifier, total, rolls, isPrivate }) => {
+    socket.on('dice_roll', ({ actor, sides, count, modifier, total, rolls, isPrivate: _isPrivate }) => {
         const rollString = `${count}d${sides}${modifier !== 0 ? (modifier > 0 ? '+' + modifier : modifier) : ''}`;
         const detailString = rolls.length > 1 ? ` (${rolls.join(' + ')})` : '';
         const msg = `rolled ${total} on ${rollString}${detailString}`;
@@ -486,12 +605,46 @@ io.on('connection', (socket) => {
     socket.on('start_encounter', ({ encounterId }) => {
         const partyCharacters = getAllCharacters();
         const tracker = startEncounter(encounterId, partyCharacters);
-        if (tracker) { logAction('DM', '⚔️ Combat has begun!'); broadcastInitiative(); }
+        if (tracker) {
+            currentCombatRound = 1;
+            currentTurnIndex = 0;
+            clearTimeline(db);
+            logAction('DM', '⚔️ Combat has begun!');
+            broadcastInitiative();
+            broadcastTimeline();
+        }
     });
 
     socket.on('next_turn', () => {
+        const prevTracker = getTrackerState();
+        const prevActiveIdx = prevTracker.findIndex(e => e.is_active);
         const tracker = advanceTurn();
-        if (tracker) io.emit('initiative_state', tracker);
+        if (!tracker || tracker.length === 0) return;
+
+        const newActiveIdx = tracker.findIndex(e => e.is_active);
+
+        // Detect round wrap-around
+        if (currentCombatRound > 0 && newActiveIdx <= prevActiveIdx && prevActiveIdx >= 0) {
+            currentCombatRound++;
+        }
+        currentTurnIndex = newActiveIdx;
+
+        const activeEntity = tracker[newActiveIdx];
+        if (activeEntity && currentCombatRound > 0) {
+            const triggerResults = [
+                ...processTurnTriggers(db, 'start_of_turn', activeEntity.id, currentCombatRound, currentTurnIndex),
+                ...processAurasForTurn(db, activeEntity.id, currentCombatRound, currentTurnIndex, 'start_of_turn'),
+            ];
+            if (triggerResults.some(r => r.success)) {
+                broadcastPartyState();
+                broadcastInitiative(); // HP changes to monsters need initiative re-broadcast
+                broadcastTimeline();
+                const names = [...new Set(triggerResults.filter(r => r.success).map(r => r.targetName))].join(', ');
+                logAction('System', `Start-of-turn automation fired for: ${names}`);
+            }
+        }
+
+        io.emit('initiative_state', tracker);
     });
 
     socket.on('set_initiative', ({ trackerId, initiative }) => {
@@ -500,12 +653,13 @@ io.on('connection', (socket) => {
         broadcastInitiative();
     });
 
-    socket.on('add_marker', ({ mapId, name, type, x, y, linkedMapId }) => {
+    socket.on('add_marker', ({ mapId, name, type, x, y, linkedMapId, description }) => {
         db.prepare(`
-            INSERT INTO map_markers (parent_map_id, linked_map_id, name, type, x, y)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(mapId, linkedMapId || null, name, type, x, y);
+            INSERT INTO map_markers (parent_map_id, linked_map_id, name, type, x, y, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(mapId, linkedMapId || null, name, type, x, y, description || '');
         broadcastMapState();
+        broadcastWorldMapState();
     });
 
     socket.on('update_marker', ({ markerId, updates }) => {
@@ -518,11 +672,50 @@ io.on('connection', (socket) => {
         values.push(markerId);
         db.prepare(`UPDATE map_markers SET ${fields.join(', ')} WHERE id = ?`).run(...values);
         broadcastMapState();
+        broadcastWorldMapState();
     });
 
     socket.on('delete_marker', ({ markerId }) => {
         db.prepare('DELETE FROM map_markers WHERE id = ?').run(markerId);
         broadcastMapState();
+        broadcastWorldMapState();
+    });
+
+    socket.on('refresh_world_map', () => {
+        broadcastWorldMapState();
+    });
+
+    // ---- Voice Chat (WebRTC Signaling) ----
+    socket.on('voice_join', ({ characterId, playerName } = {}) => {
+        voiceRoom.set(socket.id, { characterId: characterId || null, playerName: playerName || 'Adventurer' });
+        const existingPeers = [...voiceRoom.entries()]
+            .filter(([id]) => id !== socket.id)
+            .map(([id, info]) => ({ socketId: id, ...info }));
+        socket.emit('voice_existing_peers', existingPeers);
+        socket.broadcast.emit('voice_peer_joined', { socketId: socket.id, characterId: characterId || null, playerName: playerName || 'Adventurer' });
+        io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+    });
+
+    socket.on('voice_leave', () => {
+        voiceRoom.delete(socket.id);
+        io.emit('voice_peer_left', { socketId: socket.id });
+        io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+    });
+
+    socket.on('voice_offer', ({ to, offer }) => {
+        io.to(to).emit('voice_offer', { from: socket.id, offer });
+    });
+
+    socket.on('voice_answer', ({ to, answer }) => {
+        io.to(to).emit('voice_answer', { from: socket.id, answer });
+    });
+
+    socket.on('voice_ice_candidate', ({ to, candidate }) => {
+        io.to(to).emit('voice_ice_candidate', { from: socket.id, candidate });
+    });
+
+    socket.on('voice_speaking', ({ speaking }) => {
+        socket.broadcast.emit('voice_peer_speaking', { socketId: socket.id, speaking });
     });
 
     socket.on('update_initiative_hp', ({ trackerId, delta }) => {
@@ -535,8 +728,50 @@ io.on('connection', (socket) => {
 
     socket.on('end_encounter', () => {
         endEncounter();
+        currentCombatRound = 0;
+        currentTurnIndex = 0;
         logAction('DM', '🏁 Combat has ended.');
         broadcastInitiative();
+    });
+
+    // ── Party Effect Engine ──────────────────────────────────────────────────
+    socket.on('apply_party_effect', ({ effects, targets, actor }) => {
+        if (!effects || !Array.isArray(effects) || effects.length === 0) return;
+        const results = applyPartyEffect(
+            db, effects, targets || 'party',
+            actor || 'DM', currentCombatRound, currentTurnIndex, 'action', null
+        );
+        if (results.some(r => r.success)) {
+            broadcastPartyState();
+            broadcastInitiative();
+            broadcastTimeline();
+            const summary = results.filter(r => r.success).map(r => r.logMessage).join(' | ');
+            logAction(actor || 'DM', `Party effect applied — ${summary}`);
+        }
+    });
+
+    socket.on('trigger_automation', ({ presetId, actor }) => {
+        const preset = db.prepare('SELECT * FROM automation_presets WHERE id = ?').get(presetId);
+        if (!preset) return;
+        let effects, targetsSpec;
+        try { effects = JSON.parse(preset.effects_json); } catch { effects = []; }
+        try { targetsSpec = JSON.parse(preset.targets_json); } catch { targetsSpec = 'party'; }
+        const results = applyPartyEffect(
+            db, effects, targetsSpec,
+            `Macro: ${preset.name}`, currentCombatRound, currentTurnIndex, 'action', preset.id
+        );
+        if (results.some(r => r.success)) {
+            broadcastPartyState();
+            broadcastInitiative();
+            broadcastTimeline();
+            logAction(actor || 'DM', `Fired automation macro: ${preset.name}`);
+        }
+    });
+
+    socket.on('clear_effect_timeline', () => {
+        clearTimeline(db);
+        broadcastTimeline();
+        logAction('DM', 'Effect timeline cleared.');
     });
 
     socket.on('update_note', ({ noteId, content, updated_by }) => {
@@ -599,7 +834,26 @@ io.on('connection', (socket) => {
     });
 
     socket.on('refresh_party', () => { broadcastPartyState(); });
-    socket.on('disconnect', () => { playerSocketMap.delete(socket.id); });
+    socket.on('delete_character', ({ characterId }) => {
+        try {
+            db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);
+            db.prepare('DELETE FROM session_states WHERE character_id = ?').run(characterId);
+            db.prepare('DELETE FROM initiative_tracker WHERE character_id = ?').run(characterId);
+            console.log(`[Socket] Character ${characterId} deleted`);
+            broadcastPartyState();
+        } catch (err) {
+            console.error('[Socket] Delete error:', err.message);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        playerSocketMap.delete(socket.id);
+        if (voiceRoom.has(socket.id)) {
+            voiceRoom.delete(socket.id);
+            io.emit('voice_peer_left', { socketId: socket.id });
+            io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+        }
+    });
 });
 
 cron.schedule('0 3 * * *', async () => {

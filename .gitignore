@@ -45,3 +45,6 @@ client/dist/
 .agents/
 _agents/
 .gemini/
+
+# Claude Code internal memory (personal, not shared)
+.claude/

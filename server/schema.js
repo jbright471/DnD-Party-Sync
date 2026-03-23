@@ -223,6 +223,73 @@ function runMigrations() {
     );
   `);
 
+  // ---- Phase 12.0: Effect Engine & Automation ----
+
+  // Immutable event store — one row per discrete effect applied during combat
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS effect_events (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_round    INTEGER NOT NULL DEFAULT 0,
+      turn_index       INTEGER NOT NULL DEFAULT 0,
+      phase            TEXT NOT NULL DEFAULT 'action',
+      event_type       TEXT NOT NULL,
+      actor            TEXT NOT NULL,
+      target_id        INTEGER,
+      target_type      TEXT NOT NULL DEFAULT 'character',
+      target_name      TEXT,
+      payload_json     TEXT NOT NULL DEFAULT '{}',
+      parent_event_id  INTEGER DEFAULT NULL,
+      source_preset_id INTEGER DEFAULT NULL,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (parent_event_id) REFERENCES effect_events(id)
+    );
+  `);
+
+  // DM Automation presets — group actions, turn triggers, auras
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_presets (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      name                  TEXT NOT NULL,
+      preset_type           TEXT NOT NULL DEFAULT 'group_action',
+      trigger_phase         TEXT DEFAULT NULL,
+      trigger_entity_id     INTEGER DEFAULT NULL,
+      effects_json          TEXT NOT NULL DEFAULT '[]',
+      targets_json          TEXT NOT NULL DEFAULT '"party"',
+      is_active             INTEGER NOT NULL DEFAULT 1,
+      aura_radius           INTEGER DEFAULT NULL,
+      aura_center_entity_id INTEGER DEFAULT NULL,
+      description           TEXT DEFAULT '',
+      created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // ---- Phase 11.0: World Map & Voice ----
+  addColumnSafe('maps', 'is_overworld', 'INTEGER DEFAULT 0');
+  addColumnSafe('map_markers', 'description', "TEXT DEFAULT ''");
+
+  // ---- Phase 13.0: Effect Stream index ----
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_effect_events_target ON effect_events (target_id, target_type, session_round DESC);`);
+  } catch (_e) {}
+
+  // ---- Phase 13.1: DM Prep Notes ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dm_prep_notes (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      linked_type  TEXT NOT NULL DEFAULT 'general',
+      linked_id    INTEGER DEFAULT NULL,
+      title        TEXT NOT NULL DEFAULT 'Untitled',
+      content      TEXT NOT NULL DEFAULT '',
+      tags_json    TEXT NOT NULL DEFAULT '[]',
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_prep_notes_link ON dm_prep_notes (linked_type, linked_id);
+  `);
+
+  // Seed DM token placeholder (real value set on first DM login)
+  db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('dm_token', '')`);
+
   console.log('[DB] Migrations complete.');
 }
 

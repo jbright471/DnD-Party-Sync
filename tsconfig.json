@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "typeRoots": ["./client/node_modules/@types"],
+    "paths": {
+      "../types/character": ["./character.ts"],
+      "../lib/parsePdfToCharacter": ["./parsePdfToCharacter.ts"]
+    }
+  },
+  "include": ["*.ts"],
+  "exclude": ["client", "server", "files"]
+}

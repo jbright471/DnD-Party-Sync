@@ -91,4 +91,17 @@ router.patch('/:id/token', (req, res) => {
     }
 });
 
+// DELETE /api/characters/:id
+router.delete('/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+        db.prepare('DELETE FROM characters WHERE id = ?').run(id);
+        // Also cleanup session state
+        db.prepare('DELETE FROM session_states WHERE character_id = ?').run(id);
+        res.json({ success: true, message: 'Character deleted' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = { router, getAllCharacters };

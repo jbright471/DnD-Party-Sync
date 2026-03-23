@@ -20,7 +20,7 @@ async function testParser() {
     let rawText;
     try {
         rawText = execSync(`pdftotext -layout "${pdfPath}" -`).toString();
-    } catch (err) {
+    } catch (_err) {
         console.error('[Test] pdftotext failed, falling back to pdf-parse');
         const buffer = fs.readFileSync(pdfPath);
         const pdfData = await pdfParse(buffer);

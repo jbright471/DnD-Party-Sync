@@ -13,9 +13,7 @@ const {
   resolveDamage,
   resolveHeal,
   resolveTempHp,
-  resolveDeathSave,
   resolveConcentrationChange,
-  isConcentrationSpell,
   resolveConcentrationCheckDC,
   resolveCurrentAC,
   resolveFinalAbilityScores,
@@ -23,7 +21,6 @@ const {
   removeCondition,
   useSpellSlot,
   restoreAllSpellSlots,
-  useFeatureCharge,
   shortRestFeatures,
   longRestFeatures,
 } = require('./rulesEngine');

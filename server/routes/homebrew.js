@@ -88,7 +88,7 @@ router.post('/assign', (req, res) => {
         let inventory = [];
         try {
             inventory = JSON.parse(character.homebrew_inventory || '[]');
-        } catch (e) { inventory = []; }
+        } catch (_e) { inventory = []; }
 
         const stats = JSON.parse(entity.stats_json || '{}');
         

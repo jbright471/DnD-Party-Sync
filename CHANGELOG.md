@@ -4,6 +4,34 @@ All notable changes to the **DnD Party Sync** project will be documented in this
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.11.0] - 2026-03-23
+
+### Added
+- **🎲 Clickable Stat Rolls (Phase 13.0)**: All Ability Scores, Saving Throws, Skills, and Initiative are now interactive. Clicking any stat triggers a `1d20 + modifier` roll, broadcasts via `dice_roll` socket event, and shows a Sonner toast with the result. Implemented via new reusable `<RollableStat />` component (`variant="card"` and `variant="row"`).
+- **⚔️ Clickable Weapon Attacks**: New `<WeaponRow />` component with two independent click zones — **To Hit** (1d20 + attack bonus) and **Damage** (damage dice + modifier). Shift+Click on the Damage zone rolls critical damage (2× dice count). New `<ActionsPanel />` wraps weapon rows with column headers and example data fallback. Extended `dice_roll` socket payload with `rollType`, `source`, and `damageType` fields.
+- **🩹 Condition Badges in Header**: Active conditions relocated from a standalone card to the character sheet header. Each condition renders as a compact severity-colored pill badge (deadly=red, dangerous=orange, debilitating=amber, utility=slate). Hovering shows a Tooltip with actual 5e rules text for that condition. A `+` button opens a Popover grid of all 15 conditions as one-click toggles. Implemented in new `<ConditionBadges />` component using Radix `Tooltip` and `Popover`.
+- **🗂️ Character Sheet Grid Layout**: Refactored from a single vertical column to a two-column CSS Grid (`grid-cols-[280px_1fr]`). Left column (stat block: Ability Scores, Saves, Skills) is sticky. Right column (active play: Dice Roller, Actions, Inventory) scrolls freely. Full-width header card contains HP, stat pills (AC/PROF/SPD/INIT), and the new conditions row.
+- **📐 New Types**: `WeaponAttack` and `DamageType` interfaces added to `character.ts`. `Character.attacks?: WeaponAttack[]` added (not yet populated by DDB importer — falls back to example data).
+
+### Fixed
+- **🔡 Condition Case Mismatch**: `rulesEngine.js` stores conditions as lowercase; `DND_CONDITIONS` uses Title Case. Conditions were silently failing to display after being applied. Fixed by capitalizing in `normaliseCharacter()` in `GameContext.tsx`.
+
+## [1.10.0] - 2026-03-22
+
+### Added
+- **🗺️ World Map & Voice (Phase 11.0)**: Interactive SVG overworld map with discovery mode, and mesh WebRTC voice chat featuring per-peer volume control.
+- **📱 Mobile App Wrapper**: Capacitor integration (`capacitor.config.ts`) allowing dedicated Android/iOS standalone builds.
+- **⚡ Party Effect Engine (Phase 12.0)**: Deterministic multi-target processor (`effectEngine.js`), DM Automation Panel for auras and triggers, and real-time Combat Effect Timeline tracking.
+- **🪄 Spellcasting Tracker**: Interactive spell slots and concentration management directly built into the Character Sheet.
+- **🎲 Animated Dice Tray**: Real-time physics-style dice rolling broadcasted to the entire table.
+
+### Changed
+- **🎨 Tailwind Refactor**: Modernized `PartyDashboard` and `CharacterSheetModal` completely, migrating them to Tailwind CSS.
+- **🔄 DDB Re-Sync Engine**: Hardened sync logic that safely preserves local homebrew modifications while pulling external level-up data.
+
+### Fixed
+- **🐳 Docker Binary Compatibility**: Resolved `better-sqlite3` crashes in the Alpine environment by enforcing the build-from-source flag in the Dockerfile.
+
 ## [1.9.0] - 2026-03-18
 
 ### Added

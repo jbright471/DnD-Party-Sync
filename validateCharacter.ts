@@ -4,7 +4,7 @@
 // Catches the most common LLM extraction mistakes so they fail loudly at import
 // time rather than silently corrupting your rules engine during a session.
 
-import type { Character } from '../types/character';
+import type { Character } from './character';
 
 export interface ValidationResult {
   valid: boolean;
