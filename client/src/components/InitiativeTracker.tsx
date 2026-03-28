@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
-import { Swords, SkipForward, StopCircle, Heart, Shield } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { Swords, SkipForward, StopCircle, Heart, Shield, Skull } from 'lucide-react';
 import socket from '../socket';
 
 export function InitiativeTracker() {
@@ -65,54 +66,69 @@ export function InitiativeTracker() {
           const maxHp = ent.max_hp ?? char?.hp.max ?? 1;
           const hpPercent = (hp / maxHp) * 100;
 
+          const isDead = hp <= 0;
+          const conditions: string[] = char?.conditions ?? [];
+          const hpColor = isDead ? 'text-muted-foreground' : hpPercent > 50 ? 'text-health' : hpPercent > 25 ? 'text-gold' : 'text-destructive';
+          const barColor = isDead ? 'bg-muted-foreground/40' : hpPercent > 50 ? 'bg-health' : hpPercent > 25 ? 'bg-gold' : 'bg-destructive';
+
           return (
             <div
               key={ent.id}
-              className={`flex items-center gap-3 rounded-lg p-2 transition-all border ${
+              className={`rounded-lg p-2 transition-all border space-y-1.5 ${
                 ent.is_active
                   ? 'bg-primary/10 border-primary/40 shadow-[0_0_15px_rgba(var(--primary),0.1)]'
                   : 'bg-secondary/10 border-transparent'
               }`}
             >
-              <div className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                ent.is_active ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
-              }`}>
-                {i + 1}
-              </div>
+              {/* Top row: number, initiative, name, AC badge, conditions */}
+              <div className="flex items-center gap-2">
+                <div className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                  ent.is_active ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                }`}>
+                  {isDead ? <Skull className="h-3 w-3" /> : i + 1}
+                </div>
 
-              <div className="w-10 text-center">
-                <input
-                  type="number"
-                  value={ent.initiative}
-                  onChange={e => handleSetInitiative(ent.id, parseInt(e.target.value) || 0)}
-                  className="w-full bg-transparent text-center text-xs font-bold focus:outline-none"
-                />
-              </div>
+                <div className="w-10 text-center">
+                  <input
+                    type="number"
+                    value={ent.initiative}
+                    onChange={e => handleSetInitiative(ent.id, parseInt(e.target.value) || 0)}
+                    className="w-full bg-transparent text-center text-xs font-bold focus:outline-none"
+                  />
+                </div>
 
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className={`font-display text-sm truncate ${ent.is_active ? 'text-primary' : ''}`}>
+                <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
+                  <span className={`font-display text-sm truncate ${ent.is_active ? 'text-primary' : isDead ? 'line-through text-muted-foreground/50' : ''}`}>
                     {ent.entity_name}
                   </span>
                   {ent.entity_type === 'npc' && <Badge variant="outline" className="text-[8px] h-3 px-1">NPC</Badge>}
+                  {conditions.map(cond => (
+                    <Tooltip key={cond}>
+                      <TooltipTrigger asChild>
+                        <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/30 leading-none cursor-default">
+                          {cond.slice(0, 3).toUpperCase()}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">{cond}</TooltipContent>
+                    </Tooltip>
+                  ))}
                 </div>
-                
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-0.5">
-                    <Heart className="h-2.5 w-2.5 text-destructive" /> {hp}/{maxHp}
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`text-[10px] font-bold tabular-nums ${hpColor}`}>
+                    {hp}<span className="text-muted-foreground/50 font-normal">/{maxHp}</span>
                   </span>
-                  <span className="flex items-center gap-0.5">
-                    <Shield className="h-2.5 w-2.5 text-mana" /> {ent.ac ?? char?.ac}
+                  <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                    <Shield className="h-2.5 w-2.5 text-mana" />{ent.ac ?? char?.ac}
                   </span>
                 </div>
               </div>
 
-              <div className="w-16 h-1 rounded-full bg-secondary/30 overflow-hidden">
+              {/* Full-width HP bar */}
+              <div className="h-1.5 rounded-full bg-secondary/30 overflow-hidden">
                 <div
-                  className={`h-full transition-all ${
-                    hpPercent > 50 ? 'bg-health' : hpPercent > 25 ? 'bg-gold' : 'bg-destructive'
-                  }`}
-                  style={{ width: `${hpPercent}%` }}
+                  className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+                  style={{ width: `${Math.max(0, hpPercent)}%` }}
                 />
               </div>
             </div>

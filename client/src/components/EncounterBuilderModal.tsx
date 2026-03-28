@@ -4,7 +4,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { ScrollArea } from './ui/scroll-area';
-import { Swords, Plus, Trash2, ArrowLeft, Play } from 'lucide-react';
+import { Swords, Plus, Trash2, ArrowLeft, Play, Copy, ClipboardPaste } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Monster {
   name: string;
@@ -71,6 +72,24 @@ export function EncounterBuilderModal({ open, onClose, onStartEncounter }: Encou
   const handleDelete = async (id: number) => {
     await fetch(`/api/encounters/${id}`, { method: 'DELETE' });
     fetchEncounters();
+  };
+
+  const handleCopy = (enc: Encounter) => {
+    navigator.clipboard.writeText(JSON.stringify({ name: enc.name, monsters: enc.monsters }, null, 2));
+    toast.success(`"${enc.name}" copied to clipboard.`);
+  };
+
+  const handlePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const data = JSON.parse(text);
+      if (!data.name || !Array.isArray(data.monsters)) throw new Error();
+      setNewEncounter({ name: data.name, monsters: data.monsters });
+      setIsCreating(true);
+      toast.success('Encounter pasted — review and save.');
+    } catch {
+      toast.error('Clipboard does not contain a valid encounter.');
+    }
   };
 
   return (
@@ -148,12 +167,21 @@ export function EncounterBuilderModal({ open, onClose, onStartEncounter }: Encou
               </div>
             ) : (
               <div className="space-y-3">
-                <button
-                  onClick={() => setIsCreating(true)}
-                  className="w-full border-2 border-dashed border-border rounded-lg p-4 text-muted-foreground hover:text-primary hover:border-primary/50 transition-all font-bold uppercase tracking-widest text-xs"
-                >
-                  + Create New Encounter
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsCreating(true)}
+                    className="flex-1 border-2 border-dashed border-border rounded-lg p-4 text-muted-foreground hover:text-primary hover:border-primary/50 transition-all font-bold uppercase tracking-widest text-xs"
+                  >
+                    + Create New Encounter
+                  </button>
+                  <button
+                    onClick={handlePaste}
+                    title="Paste encounter from clipboard"
+                    className="border-2 border-dashed border-border rounded-lg px-4 text-muted-foreground hover:text-primary hover:border-primary/50 transition-all flex items-center gap-1.5 text-xs font-bold"
+                  >
+                    <ClipboardPaste className="h-4 w-4" /> Paste
+                  </button>
+                </div>
 
                 {encounters.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground italic opacity-40 text-sm">
@@ -178,6 +206,9 @@ export function EncounterBuilderModal({ open, onClose, onStartEncounter }: Encou
                           className="font-display text-xs"
                         >
                           <Play className="h-3 w-3 mr-1" /> Start
+                        </Button>
+                        <Button size="icon" variant="ghost" className="h-9 w-9 text-muted-foreground" onClick={() => handleCopy(enc)} title="Copy encounter">
+                          <Copy className="h-4 w-4" />
                         </Button>
                         <Button size="icon" variant="ghost" className="h-9 w-9 text-destructive" onClick={() => handleDelete(enc.id)}>
                           <Trash2 className="h-4 w-4" />

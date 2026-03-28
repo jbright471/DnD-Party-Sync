@@ -29,6 +29,18 @@ export interface Equipment {
   isHomebrew?: boolean;
 }
 
+/** An item sitting in the shared party loot pool, waiting to be claimed. */
+export interface SharedLootItem {
+  id: number;
+  name: string;
+  description: string;
+  category: string;
+  rarity: string;
+  stats: Record<string, unknown>;
+  droppedBy: string;
+  createdAt: string;
+}
+
 export type DndClass = 'Barbarian' | 'Bard' | 'Cleric' | 'Druid' | 'Fighter' | 'Monk' | 'Paladin' | 'Ranger' | 'Rogue' | 'Sorcerer' | 'Warlock' | 'Wizard';
 
 export interface Spell {
@@ -81,6 +93,124 @@ export interface WeaponAttack {
   notes?: string;
   isMelee?: boolean;
 }
+
+// ── Manual Item Form Schema ───────────────────────────────────────────────────
+
+export type ItemCategory =
+  | 'Weapon' | 'Armor' | 'Gear' | 'Magic Item'
+  | 'Potion' | 'Wondrous Item' | 'Ammunition' | 'Tool';
+
+export type ItemRarity =
+  | 'Common' | 'Uncommon' | 'Rare' | 'Very Rare' | 'Legendary' | 'Artifact';
+
+export type WeaponProperty =
+  | 'Ammunition' | 'Finesse' | 'Heavy' | 'Light' | 'Loading'
+  | 'Reach' | 'Thrown' | 'Two-Handed' | 'Versatile'
+  | 'Silvered' | 'Adamantine' | 'Special';
+
+export type WeaponMastery =
+  | '' | 'Cleave' | 'Graze' | 'Nick' | 'Push' | 'Sap' | 'Slow' | 'Topple' | 'Vex';
+
+export type ArmorCategory = 'Light' | 'Medium' | 'Heavy' | 'Shield';
+
+export interface ManualItemFormData {
+  // Base Details
+  name: string;
+  category: ItemCategory;
+  rarity: ItemRarity;
+  weight: string;
+  cost: string;
+  requiresAttunement: boolean;
+  attunementNote: string;
+  description: string;
+
+  // Weapon Specifics (shown when category === 'Weapon')
+  attackType: 'Melee' | 'Ranged';
+  isProficient: boolean;
+  proficiencyBonus: number;
+  abilityMod: number;
+  magicBonus: number;
+  attackBonusOverride: number | null; // null = auto-compute
+  damageDice: DieType;
+  damageCount: number;
+  damageBonus: number;
+  damageType: DamageType;
+  range: string;
+  properties: WeaponProperty[];
+  mastery: WeaponMastery;
+
+  // Armor Specifics (shown when category === 'Armor')
+  armorCategory: ArmorCategory;
+  baseAc: number;
+  plusBonus: number;
+  maxDexMod: number | null;   // null = no cap
+  stealthDisadvantage: boolean;
+  strengthRequirement: number;
+
+  // Magic Item Specifics (shown when category === 'Magic Item' or requiresAttunement)
+  charges: number | null;
+  rechargeOn: '' | 'Dawn' | 'Dusk' | 'Short Rest' | 'Long Rest';
+}
+
+export const ITEM_CATEGORIES: ItemCategory[] = [
+  'Weapon', 'Armor', 'Gear', 'Magic Item', 'Potion', 'Wondrous Item', 'Ammunition', 'Tool',
+];
+
+export const ITEM_RARITIES: ItemRarity[] = [
+  'Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Artifact',
+];
+
+export const WEAPON_PROPERTIES: WeaponProperty[] = [
+  'Ammunition', 'Finesse', 'Heavy', 'Light', 'Loading',
+  'Reach', 'Thrown', 'Two-Handed', 'Versatile',
+  'Silvered', 'Adamantine', 'Special',
+];
+
+export const WEAPON_MASTERIES: { value: WeaponMastery; description: string }[] = [
+  { value: '',       description: 'None' },
+  { value: 'Cleave', description: 'Cleave — hit another creature within reach' },
+  { value: 'Graze',  description: 'Graze — deal ability mod damage on a miss' },
+  { value: 'Nick',   description: 'Nick — extra attack with the Light property' },
+  { value: 'Push',   description: 'Push — push target 10 ft on hit' },
+  { value: 'Sap',    description: 'Sap — target has Disadvantage on next attack' },
+  { value: 'Slow',   description: 'Slow — reduce target Speed by 10 ft' },
+  { value: 'Topple', description: 'Topple — target must save or fall Prone' },
+  { value: 'Vex',    description: 'Vex — gain Advantage on your next attack' },
+];
+
+export const MANUAL_ITEM_DEFAULTS: ManualItemFormData = {
+  name: '',
+  category: 'Weapon',
+  rarity: 'Common',
+  weight: '',
+  cost: '',
+  requiresAttunement: false,
+  attunementNote: '',
+  description: '',
+  attackType: 'Melee',
+  isProficient: true,
+  proficiencyBonus: 2,
+  abilityMod: 3,
+  magicBonus: 0,
+  attackBonusOverride: null,
+  damageDice: 'd8',
+  damageCount: 1,
+  damageBonus: 0,
+  damageType: 'Slashing',
+  range: '5 ft reach',
+  properties: [],
+  mastery: '',
+  armorCategory: 'Medium',
+  baseAc: 14,
+  plusBonus: 0,
+  maxDexMod: 2,
+  stealthDisadvantage: false,
+  strengthRequirement: 0,
+  charges: null,
+  rechargeOn: '',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const DND_CONDITIONS = [
   'Blinded', 'Charmed', 'Deafened', 'Frightened', 'Grappled', 

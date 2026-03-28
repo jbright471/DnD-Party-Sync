@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { generateHomebrewStats, parseItemDescriptionLLM } = require('../ollama');
+const { generateHomebrewStats, parseItemDescriptionLLM, parseManualItemLLM } = require('../ollama');
 
 // GET /api/homebrew — list all homebrew entities
 router.get('/', (req, res) => {
@@ -9,6 +9,28 @@ router.get('/', (req, res) => {
         const entities = db.prepare('SELECT * FROM homebrew_entities ORDER BY created_at DESC').all();
         res.json(entities.map(e => ({ ...e, stats_json: JSON.parse(e.stats_json) })));
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/homebrew/parse-item — extract ManualItemFormData from raw text via LLM
+router.post('/parse-item', async (req, res) => {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+        return res.status(400).json({ error: 'text is required' });
+    }
+    try {
+        const result = await parseManualItemLLM(text.trim());
+        if (!result) {
+            return res.status(502).json({ error: 'AI did not return a result. Is Ollama running?' });
+        }
+        // LLM returned an explicit error (not a D&D item, etc.)
+        if (result.error) {
+            return res.status(422).json({ error: result.error });
+        }
+        res.json(result);
+    } catch (err) {
+        console.error('[/api/homebrew/parse-item]', err.message);
         res.status(500).json({ error: err.message });
     }
 });

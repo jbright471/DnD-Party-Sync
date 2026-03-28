@@ -35,6 +35,11 @@
   --color-health: hsl(120 50% 40%);
   --color-mana: hsl(220 70% 55%);
   --color-gold: hsl(45 80% 55%);
+
+  /* Sidebar — must be defined so bg-sidebar is not transparent */
+  --color-sidebar: hsl(240 10% 9%);
+  --color-sidebar-foreground: hsl(45 20% 90%);
+  --color-sidebar-border: hsl(240 6% 18%);
 }
 
 @utility text-mana { color: var(--color-mana); }
@@ -114,4 +119,23 @@
   background-size: 800px 100%;
   animation: shimmer 1.5s infinite linear;
   border-radius: 4px;
+}
+
+/* HP change flash effects — triggered on DM God-Eye cards */
+@keyframes flash-damage {
+  0%   { box-shadow: inset 0 0 24px rgba(220, 38, 38, 0.5), 0 0 12px rgba(220, 38, 38, 0.3); border-color: rgba(220, 38, 38, 0.7); }
+  100% { box-shadow: none; border-color: transparent; }
+}
+
+@keyframes flash-heal {
+  0%   { box-shadow: inset 0 0 24px rgba(34, 197, 94, 0.4), 0 0 12px rgba(34, 197, 94, 0.25); border-color: rgba(34, 197, 94, 0.6); }
+  100% { box-shadow: none; border-color: transparent; }
+}
+
+.animate-flash-damage {
+  animation: flash-damage 800ms ease-out both;
+}
+
+.animate-flash-heal {
+  animation: flash-heal 800ms ease-out both;
 }

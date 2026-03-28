@@ -189,6 +189,27 @@ app.get('/api/effect-timeline', (req, res) => {
     }
 });
 
+app.get('/api/sync-audit', (req, res) => {
+    try {
+        const connectedPlayers = [...playerSocketMap.values()];
+        const pendingSaves = db.prepare(`
+            SELECT ps.*, c.name AS character_name
+            FROM pending_saves ps
+            LEFT JOIN characters c ON c.id = ps.character_id
+            ORDER BY ps.created_at ASC
+        `).all();
+        res.json({
+            currentRound: currentCombatRound,
+            currentTurn: currentTurnIndex,
+            combatActive: currentCombatRound > 0,
+            connectedPlayers,
+            pendingSaves,
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/recaps', (req, res) => {
     try {
         const recaps = db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all();
@@ -232,6 +253,21 @@ function broadcastPartyState() {
         };
     });
     io.emit('party_state', resolved);
+}
+
+function broadcastPartyLoot() {
+    const rows = db.prepare('SELECT * FROM shared_loot ORDER BY created_at DESC').all();
+    const items = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        category: r.category,
+        rarity: r.rarity,
+        stats: JSON.parse(r.stats_json || '{}'),
+        droppedBy: r.dropped_by,
+        createdAt: r.created_at,
+    }));
+    io.emit('party_loot_state', items);
 }
 
 function broadcastLogs() {
@@ -420,6 +456,40 @@ io.on('connection', (socket) => {
             }
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
+
+            // Emit dedicated HP-change event for DM flash effects
+            const hpChar = getCharacterData(db, characterId);
+            if (hpChar) {
+                io.emit('hp_change_event', {
+                    characterId,
+                    characterName: hpChar.name,
+                    currentHp: result.newHp,
+                    maxHp: hpChar.baseMaxHp,
+                    delta,
+                    type: delta < 0 ? 'damage' : 'heal',
+                    damageType: delta < 0 ? (damageType || 'untyped') : null,
+                    actor: actor || 'System',
+                    timestamp: new Date().toISOString(),
+                });
+
+                // Also pipe into roll feed so DMEffectStream picks it up
+                io.to('dm_room').emit('roll_feed_event', {
+                    id: Date.now(),
+                    actor: actor || 'System',
+                    characterId: String(characterId),
+                    label: result.logMessage,
+                    source: null,
+                    rollType: delta < 0 ? 'HP Damage' : 'HP Heal',
+                    sides: 0,
+                    count: 0,
+                    modifier: 0,
+                    total: result.newHp,
+                    rolls: [Math.abs(delta)],
+                    damageType: delta < 0 ? (damageType || 'untyped') : null,
+                    isPrivate: false,
+                    timestamp: new Date().toISOString(),
+                });
+            }
         }
     });
 
@@ -552,11 +622,81 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('dice_roll', ({ actor, sides, count, modifier, total, rolls, isPrivate: _isPrivate }) => {
+    socket.on('dice_roll', ({ actor, sides, count, modifier, total, rolls, isPrivate, rollType, ability, label, source, damageType }) => {
         const rollString = `${count}d${sides}${modifier !== 0 ? (modifier > 0 ? '+' + modifier : modifier) : ''}`;
         const detailString = rolls.length > 1 ? ` (${rolls.join(' + ')})` : '';
         const msg = `rolled ${total} on ${rollString}${detailString}`;
-        logAction(actor || 'Someone', msg);
+
+        // Only log non-private rolls to the shared action log
+        if (!isPrivate) logAction(actor || 'Someone', msg);
+
+        // ── Broadcast to DM Roll Feed ──
+        const socketInfo = playerSocketMap.get(socket.id);
+        const feedEvent = {
+            id: Date.now(),
+            actor: actor || 'Someone',
+            characterId: socketInfo?.characterId ?? null,
+            label: label || rollType || 'Roll',
+            source: source || null,
+            rollType: rollType || 'Roll',
+            sides, count, modifier, total, rolls,
+            damageType: damageType || null,
+            isPrivate: !!isPrivate,
+            timestamp: new Date().toISOString(),
+        };
+        // Always send to DM room
+        io.to('dm_room').emit('roll_feed_event', feedEvent);
+        // Only broadcast publicly if not private
+        if (!isPrivate) io.emit('roll_feed_event', feedEvent);
+
+        // ── Sync-Linked Dice Rolls: auto-resolve pending saves ──
+        if (rollType === 'saving_throw' && ability) {
+            const socketInfo = playerSocketMap.get(socket.id);
+            const characterId = socketInfo?.characterId;
+            if (characterId) {
+                const pending = db.prepare(
+                    `SELECT * FROM pending_saves WHERE character_id = ? AND ability = ? ORDER BY created_at ASC LIMIT 1`
+                ).get(characterId, ability.toLowerCase());
+                if (pending) {
+                    const passed = total >= pending.dc;
+                    const effects = passed ? JSON.parse(pending.on_pass_json) : JSON.parse(pending.on_fail_json);
+                    if (effects.length > 0) {
+                        applyPartyEffect(
+                            db, effects, [{ id: characterId, type: 'character' }],
+                            `Auto (Save)`, currentCombatRound, currentTurnIndex, 'reaction', null
+                        );
+                        broadcastPartyState();
+                        broadcastTimeline();
+                    }
+                    db.prepare('DELETE FROM pending_saves WHERE id = ?').run(pending.id);
+                    const charName = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId)?.name ?? `Character ${characterId}`;
+                    logAction('System', `${charName} ${passed ? 'passed' : 'failed'} DC ${pending.dc} ${pending.ability.toUpperCase()} save${effects.length > 0 ? ' — effects applied' : ''}.`);
+                    io.emit('save_resolved', { characterId, ability: pending.ability, dc: pending.dc, roll: total, passed, charName });
+                }
+            }
+        }
+    });
+
+    socket.on('dm_request_save', ({ targetCharacterIds, dc, ability, onFailEffects, onPassEffects }) => {
+        if (!Array.isArray(targetCharacterIds) || targetCharacterIds.length === 0) return;
+        const normAbility = (ability || 'wis').toLowerCase();
+        const insertPending = db.prepare(
+            `INSERT INTO pending_saves (character_id, dc, ability, on_fail_json, on_pass_json, source) VALUES (?, ?, ?, ?, ?, 'DM')`
+        );
+        for (const charId of targetCharacterIds) {
+            insertPending.run(charId, dc || 15, normAbility, JSON.stringify(onFailEffects || []), JSON.stringify(onPassEffects || []));
+            for (const [socketId, info] of playerSocketMap.entries()) {
+                if (info.characterId === charId) {
+                    io.to(socketId).emit('pending_save_request', {
+                        dc: dc || 15,
+                        ability: normAbility,
+                        source: 'DM',
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+        }
+        logAction('DM', `Requested DC ${dc} ${normAbility.toUpperCase()} save from ${targetCharacterIds.length} character(s).`);
     });
 
     socket.on('spawn_monster', (monsterData) => {
@@ -810,11 +950,31 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('blind_roll_response', ({ rollType, result, characterId }) => {
+    socket.on('blind_roll_response', ({ rollType, result, characterId, ability }) => {
         for (const [socketId, info] of playerSocketMap.entries()) {
             if (info.characterId !== characterId) io.to(socketId).emit('blind_roll_result', { characterId, rollType, result, timestamp: new Date().toISOString() });
         }
         socket.broadcast.emit('blind_roll_result_dm', { characterId, rollType, result, timestamp: new Date().toISOString() });
+
+        // Auto-resolve any matching pending save
+        if (rollType === 'saving_throw' && characterId && ability) {
+            const pending = db.prepare(
+                `SELECT * FROM pending_saves WHERE character_id = ? AND ability = ? ORDER BY created_at ASC LIMIT 1`
+            ).get(characterId, ability.toLowerCase());
+            if (pending) {
+                const passed = result >= pending.dc;
+                const effects = passed ? JSON.parse(pending.on_pass_json) : JSON.parse(pending.on_fail_json);
+                if (effects.length > 0) {
+                    applyPartyEffect(db, effects, [{ id: characterId, type: 'character' }], 'Auto (Save)', currentCombatRound, currentTurnIndex, 'reaction', null);
+                    broadcastPartyState();
+                    broadcastTimeline();
+                }
+                db.prepare('DELETE FROM pending_saves WHERE id = ?').run(pending.id);
+                const charName = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId)?.name ?? `Character ${characterId}`;
+                logAction('System', `${charName} ${passed ? 'passed' : 'failed'} DC ${pending.dc} ${pending.ability.toUpperCase()} save${effects.length > 0 ? ' — effects applied' : ''}.`);
+                io.emit('save_resolved', { characterId, ability: pending.ability, dc: pending.dc, roll: result, passed, charName });
+            }
+        }
     });
 
     socket.on('end_session', async (callback) => {
@@ -834,6 +994,66 @@ io.on('connection', (socket) => {
     });
 
     socket.on('refresh_party', () => { broadcastPartyState(); });
+    socket.on('refresh_party_loot', () => { broadcastPartyLoot(); });
+
+    // ── Shared Party Loot Pool ───────────────────────────────────────────────
+    socket.on('drop_loot', ({ name, description, category, rarity, stats, droppedBy }) => {
+        db.prepare(`
+            INSERT INTO shared_loot (name, description, category, rarity, stats_json, dropped_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(name, description || '', category || 'Gear', rarity || 'Common', JSON.stringify(stats || {}), droppedBy || 'DM');
+        broadcastPartyLoot();
+        logAction(droppedBy || 'DM', `dropped ${name} into the party loot pool`);
+    });
+
+    socket.on('claim_loot', ({ lootId, characterId, characterName }) => {
+        const item = db.prepare('SELECT * FROM shared_loot WHERE id = ?').get(lootId);
+        if (!item) { socket.emit('rules_error', { message: 'Item already claimed!' }); return; }
+
+        // Remove from pool
+        db.prepare('DELETE FROM shared_loot WHERE id = ?').run(lootId);
+
+        // Add to character's homebrew inventory
+        const char = db.prepare('SELECT homebrew_inventory FROM characters WHERE id = ?').get(characterId);
+        if (!char) return;
+
+        const inventory = JSON.parse(char.homebrew_inventory || '[]');
+        inventory.push({
+            id: `loot-${item.id}-${Date.now()}`,
+            name: item.name,
+            description: item.description,
+            type: 'item',
+            stats: JSON.parse(item.stats_json || '{}'),
+            isHomebrew: true,
+            equipped: false,
+            quantity: 1,
+        });
+        db.prepare('UPDATE characters SET homebrew_inventory = ? WHERE id = ?').run(JSON.stringify(inventory), characterId);
+
+        broadcastPartyLoot();
+        broadcastPartyState();
+        logAction(characterName || 'Player', `claimed ${item.name} from the party loot pool`);
+
+        // Pipe to DM effect stream
+        io.to('dm_room').emit('roll_feed_event', {
+            id: Date.now(),
+            actor: characterName || 'Player',
+            characterId: String(characterId),
+            label: `${characterName} looted ${item.name}`,
+            source: null,
+            rollType: 'Loot Claimed',
+            sides: 0, count: 0, modifier: 0, total: 0, rolls: [],
+            damageType: null,
+            isPrivate: false,
+            timestamp: new Date().toISOString(),
+        });
+    });
+
+    socket.on('remove_loot', ({ lootId }) => {
+        db.prepare('DELETE FROM shared_loot WHERE id = ?').run(lootId);
+        broadcastPartyLoot();
+    });
+
     socket.on('delete_character', ({ characterId }) => {
         try {
             db.prepare('DELETE FROM characters WHERE id = ?').run(characterId);

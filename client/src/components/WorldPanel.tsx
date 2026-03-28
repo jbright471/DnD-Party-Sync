@@ -23,8 +23,8 @@ export function WorldPanel({ isDm = false }: WorldPanelProps) {
 
   useEffect(() => {
     fetch('/api/world/state')
-      .then(res => res.json())
-      .then(data => setWorldState(data))
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data?.time) setWorldState(data); })
       .catch(() => {});
 
     const handleUpdate = (data: WorldState) => setWorldState(data);

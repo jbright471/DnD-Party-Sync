@@ -14,6 +14,7 @@ import { RollableStat } from '../components/RollableStat';
 import { StatChecks } from '../components/StatChecks';
 import { ActionsPanel } from '../components/ActionsPanel';
 import { ConditionBadges } from '../components/ConditionBadges';
+import { SharedLootPool } from '../components/SharedLootPool';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { backend } from '../integrations/backend';
@@ -309,6 +310,9 @@ export default function CharacterSheet() {
 
           {/* Attack Actions */}
           <ActionsPanel character={character} />
+
+          {/* Party Loot Pool — shared items available to claim */}
+          <SharedLootPool characterId={character.id} characterName={character.name} />
 
           {/* Inventory */}
           <Card>

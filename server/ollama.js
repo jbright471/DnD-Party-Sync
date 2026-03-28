@@ -389,6 +389,95 @@ Output schema:
 }
 
 /**
+ * Manual Item Parser — extracts full ManualItemFormData from raw item text.
+ * Returns an object matching the ManualItemFormData schema, or { error: "..." }.
+ */
+async function parseManualItemLLM(rawText) {
+    const system = `You are a precise D&D 5e item data extractor.
+Your ONLY job is to read an item description and return a JSON object matching the schema below exactly.
+
+VALID VALUES — use ONLY these exact strings:
+- category:    "Weapon" | "Armor" | "Gear" | "Magic Item" | "Potion" | "Wondrous Item" | "Ammunition" | "Tool"
+- rarity:      "Common" | "Uncommon" | "Rare" | "Very Rare" | "Legendary" | "Artifact"
+- damageDice:  "d4" | "d6" | "d8" | "d10" | "d12" | "d20"
+- damageType:  "Slashing" | "Piercing" | "Bludgeoning" | "Fire" | "Cold" | "Lightning" | "Thunder" | "Acid" | "Poison" | "Necrotic" | "Radiant" | "Psychic" | "Force"
+- properties:  any subset of ["Ammunition","Finesse","Heavy","Light","Loading","Reach","Thrown","Two-Handed","Versatile","Silvered","Adamantine","Special"]
+- mastery:     "" | "Cleave" | "Graze" | "Nick" | "Push" | "Sap" | "Slow" | "Topple" | "Vex"
+- armorCategory: "Light" | "Medium" | "Heavy" | "Shield"
+- rechargeOn:  "" | "Dawn" | "Dusk" | "Short Rest" | "Long Rest"
+- attackType:  "Melee" | "Ranged"
+
+EXTRACTION RULES:
+1. If the text is NOT a D&D item, return ONLY: {"error": "Not a recognisable D&D item"}
+2. category: use "Weapon" for weapons, "Armor" for worn-AC items. Magic weapons/armors keep their primary category.
+3. rarity: default "Common" if not stated.
+4. requiresAttunement: true only if the text explicitly says "requires attunement".
+5. magicBonus: extract from "+1 sword", "+2 shield", etc. Default 0.
+6. attackBonusOverride: always null (let user set their own).
+7. proficiencyBonus: always 0 (user-specific). abilityMod: always 0 (user-specific).
+8. isProficient: always true.
+9. damageBonus: 0 unless the item text lists a separate flat damage bonus (rare).
+10. properties: only include properties explicitly named in the text.
+11. mastery: only if a 2024 mastery property (Cleave, Nick, etc.) is explicitly named.
+12. For armor — maxDexMod: null for Heavy, 2 for Medium, null for Light/Shield (no cap).
+13. stealthDisadvantage: true only if text states it.
+14. strengthRequirement: extract number if "Strength X" minimum is stated, else 0.
+15. weight/cost: extract if stated (e.g. "3 lb.", "50 gp"), else "".
+16. description: the flavour/lore paragraph only — NOT the mechanical stat line.
+17. charges: extract number if stated, else null. rechargeOn: "" if not stated.
+18. range: for melee weapons use "5 ft reach", for ranged use the stated range.
+
+Return ONLY raw JSON — no markdown fences, no prose.
+
+Schema:
+{
+  "name": "string",
+  "category": "Weapon",
+  "rarity": "Common",
+  "weight": "",
+  "cost": "",
+  "requiresAttunement": false,
+  "attunementNote": "",
+  "description": "",
+  "attackType": "Melee",
+  "isProficient": true,
+  "proficiencyBonus": 0,
+  "abilityMod": 0,
+  "magicBonus": 0,
+  "attackBonusOverride": null,
+  "damageDice": "d8",
+  "damageCount": 1,
+  "damageBonus": 0,
+  "damageType": "Slashing",
+  "range": "5 ft reach",
+  "properties": [],
+  "mastery": "",
+  "armorCategory": "Medium",
+  "baseAc": 0,
+  "plusBonus": 0,
+  "maxDexMod": null,
+  "stealthDisadvantage": false,
+  "strengthRequirement": 0,
+  "charges": null,
+  "rechargeOn": ""
+}`;
+
+    const prompt = `Extract the item from this text:\n---\n${rawText.substring(0, 4000)}\n---`;
+
+    try {
+        return await ollamaRequest({
+            prompt,
+            system,
+            format: 'json',
+            options: { temperature: 0 },
+        });
+    } catch (e) {
+        console.error('[Ollama] Manual item parse error:', e.message);
+        throw e;
+    }
+}
+
+/**
  * Character PDF Parser — extracts structured character data from PDF text.
  * Uses extended timeout and zero temperature for precision.
  */
@@ -454,6 +543,7 @@ module.exports = {
     generateSessionRecap,
     generateHomebrewStats,
     parseItemDescriptionLLM,
+    parseManualItemLLM,
     parseCharacterPdfLLM,
     generateLoreLLM,
     generateLootLLM,

@@ -267,6 +267,24 @@ function runMigrations() {
   addColumnSafe('maps', 'is_overworld', 'INTEGER DEFAULT 0');
   addColumnSafe('map_markers', 'description', "TEXT DEFAULT ''");
 
+  // ---- Phase 14.0: Effect Locking ----
+  addColumnSafe('automation_presets', 'is_locked', 'INTEGER DEFAULT 0');
+
+  // ---- Phase 14.0: Pending Saves (Sync-Linked Dice Rolls) ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_saves (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      character_id INTEGER NOT NULL,
+      dc           INTEGER NOT NULL DEFAULT 15,
+      ability      TEXT NOT NULL DEFAULT 'wis',
+      on_fail_json TEXT NOT NULL DEFAULT '[]',
+      on_pass_json TEXT NOT NULL DEFAULT '[]',
+      source       TEXT DEFAULT 'DM',
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+  `);
+
   // ---- Phase 13.0: Effect Stream index ----
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_effect_events_target ON effect_events (target_id, target_type, session_round DESC);`);
@@ -285,6 +303,20 @@ function runMigrations() {
       updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_dm_prep_notes_link ON dm_prep_notes (linked_type, linked_id);
+  `);
+
+  // ---- Phase 14: Shared Party Loot Pool ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS shared_loot (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      category    TEXT DEFAULT 'Gear',
+      rarity      TEXT DEFAULT 'Common',
+      stats_json  TEXT DEFAULT '{}',
+      dropped_by  TEXT DEFAULT 'DM',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Seed DM token placeholder (real value set on first DM login)

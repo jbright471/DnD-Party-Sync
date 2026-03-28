@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Zap, Plus, Trash2, Play, ToggleLeft, ToggleRight, Flame, Wind, Shield, Info } from 'lucide-react';
+import { Zap, Plus, Trash2, Play, ToggleLeft, ToggleRight, Flame, Wind, Shield, Info, Lock, Unlock, Swords, ChevronDown, ChevronUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -47,6 +47,7 @@ interface AutomationPreset {
   effects_json: string;
   targets_json: string;
   is_active: number;
+  is_locked: number;
   aura_radius: number | null;
   description: string;
 }
@@ -172,6 +173,13 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
     targetMode: 'party', description: '', aura_radius: null,
   });
 
+  // ── Save Request state ──
+  const [showSaveRequest, setShowSaveRequest] = useState(false);
+  const [saveDc, setSaveDc] = useState(15);
+  const [saveAbility, setSaveAbility] = useState('wis');
+  const [saveTargets, setSaveTargets] = useState<Set<number>>(new Set());
+  const [saveOnFailEffects, setSaveOnFailEffects] = useState<EffectDef[]>([{ type: 'condition', condition: 'Poisoned' }]);
+
   const fetchPresets = useCallback(() => {
     fetch('/api/automation').then(r => r.json()).then(setPresets).catch(() => {});
   }, []);
@@ -234,6 +242,22 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
     toast.success(`Macro "${saveAsName}" saved.`);
   };
 
+  // ── Save Request ──
+
+  const handleFireSaveRequest = () => {
+    if (saveTargets.size === 0) return toast.error('Select at least one character.');
+    socket.emit('dm_request_save', {
+      targetCharacterIds: [...saveTargets],
+      dc: saveDc,
+      ability: saveAbility,
+      onFailEffects: saveOnFailEffects,
+      onPassEffects: [],
+    });
+    toast.success(`DC ${saveDc} ${saveAbility.toUpperCase()} save requested from ${saveTargets.size} character(s).`);
+    setSaveTargets(new Set());
+    setShowSaveRequest(false);
+  };
+
   // ── Preset actions ──
 
   const handleTogglePreset = async (preset: AutomationPreset) => {
@@ -245,10 +269,21 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
     fetchPresets();
   };
 
-  const handleDeletePreset = async (id: number) => {
-    await fetch(`/api/automation/${id}`, { method: 'DELETE' });
+  const handleDeletePreset = async (preset: AutomationPreset) => {
+    if (preset.is_locked) return toast.error('Unlock the preset before deleting.');
+    await fetch(`/api/automation/${preset.id}`, { method: 'DELETE' });
     fetchPresets();
     toast.success('Preset deleted.');
+  };
+
+  const handleLockPreset = async (preset: AutomationPreset) => {
+    await fetch(`/api/automation/${preset.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_locked: preset.is_locked ? 0 : 1 }),
+    });
+    fetchPresets();
+    toast.success(preset.is_locked ? 'Preset unlocked.' : 'Preset locked (persistent).');
   };
 
   const handleFirePreset = (preset: AutomationPreset) => {
@@ -395,6 +430,72 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                 Save Macro
               </Button>
             </div>
+
+            {/* ── Save Request ── */}
+            <div className="border border-border/40 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setShowSaveRequest(v => !v)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/20 transition-colors"
+              >
+                <Swords className="h-3.5 w-3.5 text-primary/70" />
+                Request Saving Throw
+                {showSaveRequest ? <ChevronUp className="h-3 w-3 ml-auto" /> : <ChevronDown className="h-3 w-3 ml-auto" />}
+              </button>
+              {showSaveRequest && (
+                <div className="px-3 pb-3 space-y-2 border-t border-border/40 pt-2">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Label className="text-[10px]">Ability</Label>
+                      <Select value={saveAbility} onValueChange={setSaveAbility}>
+                        <SelectTrigger className="h-7 text-xs mt-0.5 bg-background/50"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {['str','dex','con','int','wis','cha'].map(a => (
+                            <SelectItem key={a} value={a} className="text-xs uppercase">{a}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-20">
+                      <Label className="text-[10px]">DC</Label>
+                      <Input type="number" min={1} max={30} value={saveDc}
+                        onChange={e => setSaveDc(parseInt(e.target.value) || 15)}
+                        className="h-7 text-xs mt-0.5 bg-background/50" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-[10px]">Target Characters</Label>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {party.map(c => {
+                        const cid = parseInt(c.id);
+                        const sel = saveTargets.has(cid);
+                        return (
+                          <button key={cid} onClick={() => setSaveTargets(prev => { const n = new Set(prev); sel ? n.delete(cid) : n.add(cid); return n; })}
+                            className={`px-2 py-0.5 rounded-full border text-xs transition-all ${sel ? 'bg-primary/20 border-primary text-primary' : 'border-border/40 text-muted-foreground hover:border-primary/50'}`}>
+                            {c.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">On Fail Effects</Label>
+                    {saveOnFailEffects.map((eff, idx) => (
+                      <EffectRow key={idx} effect={eff}
+                        onChange={updated => setSaveOnFailEffects(prev => prev.map((e, i) => i === idx ? updated : e))}
+                        onRemove={() => setSaveOnFailEffects(prev => prev.filter((_, i) => i !== idx))} />
+                    ))}
+                    <Button variant="outline" size="sm" className="w-full h-6 text-[10px] border-dashed"
+                      onClick={() => setSaveOnFailEffects(prev => [...prev, { type: 'condition', condition: 'Poisoned' }])}>
+                      <Plus className="h-2.5 w-2.5 mr-1" /> Add Fail Effect
+                    </Button>
+                  </div>
+                  <Button size="sm" className="w-full h-7 text-xs" onClick={handleFireSaveRequest}
+                    disabled={saveTargets.size === 0}>
+                    <Swords className="h-3 w-3 mr-1" /> Send Save Request
+                  </Button>
+                </div>
+              )}
+            </div>
           </TabsContent>
 
           {/* ── Saved Macros ──────────────────────────────────────────────── */}
@@ -485,6 +586,10 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                         )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => handleLockPreset(preset)} title={preset.is_locked ? 'Unlock preset' : 'Lock as persistent'}
+                          className="text-muted-foreground hover:text-amber-400 transition-colors">
+                          {preset.is_locked ? <Lock className="h-3.5 w-3.5 text-amber-400" /> : <Unlock className="h-3.5 w-3.5" />}
+                        </button>
                         <button onClick={() => handleTogglePreset(preset)} title={preset.is_active ? 'Disable' : 'Enable'}
                           className="text-muted-foreground hover:text-primary transition-colors">
                           {preset.is_active ? <ToggleRight className="h-4 w-4 text-green-500" /> : <ToggleLeft className="h-4 w-4" />}
@@ -494,9 +599,11 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                             <Play className="h-2.5 w-2.5 mr-0.5" /> Fire
                           </Button>
                         )}
-                        <button onClick={() => handleDeletePreset(preset.id)} className="text-muted-foreground/40 hover:text-destructive transition-colors">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {!preset.is_locked && (
+                          <button onClick={() => handleDeletePreset(preset)} className="text-muted-foreground/40 hover:text-destructive transition-colors">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -604,13 +711,19 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                               {' · '}{effects.length} effect{effects.length !== 1 ? 's' : ''}
                             </div>
                           </div>
+                          <button onClick={() => handleLockPreset(aura)} title={aura.is_locked ? 'Unlock' : 'Lock as persistent'}
+                            className="text-muted-foreground hover:text-amber-400 transition-colors">
+                            {aura.is_locked ? <Lock className="h-3.5 w-3.5 text-amber-400" /> : <Unlock className="h-3.5 w-3.5" />}
+                          </button>
                           <button onClick={() => handleTogglePreset(aura)} title={aura.is_active ? 'Disable' : 'Enable'}
                             className="text-muted-foreground hover:text-primary transition-colors">
                             {aura.is_active ? <ToggleRight className="h-4 w-4 text-green-500" /> : <ToggleLeft className="h-4 w-4" />}
                           </button>
-                          <button onClick={() => handleDeletePreset(aura.id)} className="text-muted-foreground/40 hover:text-destructive transition-colors">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {!aura.is_locked && (
+                            <button onClick={() => handleDeletePreset(aura)} className="text-muted-foreground/40 hover:text-destructive transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                         {aura.description && (
                           <p className="text-[9px] text-muted-foreground/60 italic mt-1 pl-5">{aura.description}</p>

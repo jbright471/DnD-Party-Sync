@@ -52,7 +52,7 @@ router.post('/', (req, res) => {
 // PATCH /api/automation/:id
 router.patch('/:id', (req, res) => {
     const allowed = [
-        'name', 'is_active', 'effects_json', 'targets_json',
+        'name', 'is_active', 'is_locked', 'effects_json', 'targets_json',
         'description', 'trigger_phase', 'trigger_entity_id',
         'aura_radius', 'aura_center_entity_id', 'preset_type',
     ];
@@ -82,6 +82,8 @@ router.patch('/:id', (req, res) => {
 // DELETE /api/automation/:id
 router.delete('/:id', (req, res) => {
     try {
+        const preset = db.prepare('SELECT is_locked FROM automation_presets WHERE id = ?').get(req.params.id);
+        if (preset?.is_locked) return res.status(403).json({ error: 'Preset is locked and cannot be deleted.' });
         db.prepare('DELETE FROM automation_presets WHERE id = ?').run(req.params.id);
         res.json({ success: true });
     } catch (err) {

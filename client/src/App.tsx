@@ -69,6 +69,33 @@ function ConcentrationAlerts() {
   return null;
 }
 
+function SavingThrowAlerts() {
+  useEffect(() => {
+    const onPendingSave = ({ dc, ability, source }: { dc: number; ability: string; source: string }) => {
+      toast.warning(`${source} requests a DC ${dc} ${ability.toUpperCase()} saving throw!`, {
+        description: `Roll your ${ability.toUpperCase()} save — the result will auto-apply.`,
+        duration: 30000,
+      });
+    };
+
+    const onSaveResolved = ({ charName, ability, dc, roll, passed }: { charName: string; ability: string; dc: number; roll: number; passed: boolean }) => {
+      if (passed) {
+        toast.success(`${charName} passed the DC ${dc} ${ability.toUpperCase()} save! (rolled ${roll})`, { duration: 6000 });
+      } else {
+        toast.error(`${charName} failed the DC ${dc} ${ability.toUpperCase()} save! (rolled ${roll}) — effects applied.`, { duration: 8000 });
+      }
+    };
+
+    socket.on('pending_save_request', onPendingSave);
+    socket.on('save_resolved', onSaveResolved);
+    return () => {
+      socket.off('pending_save_request', onPendingSave);
+      socket.off('save_resolved', onSaveResolved);
+    };
+  }, []);
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -76,6 +103,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <ConcentrationAlerts />
+        <SavingThrowAlerts />
         <BrowserRouter>
           <Layout>
             <Routes>

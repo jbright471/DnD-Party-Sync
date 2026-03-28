@@ -6,9 +6,9 @@ const { generateWeatherLLM } = require('../ollama');
 // GET /api/world/state
 router.get('/state', (req, res) => {
     try {
-        const time = db.prepare('SELECT value FROM campaign_state WHERE key = "current_time"').get();
-        const weather = db.prepare('SELECT value FROM campaign_state WHERE key = "current_weather"').get();
-        
+        const time = db.prepare(`SELECT value FROM campaign_state WHERE key = 'current_time'`).get();
+        const weather = db.prepare(`SELECT value FROM campaign_state WHERE key = 'current_weather'`).get();
+
         res.json({
             time: JSON.parse(time?.value || '{}'),
             weather: JSON.parse(weather?.value || '{}')
@@ -24,7 +24,7 @@ router.post('/advance-time', (req, res) => {
     if (!minutes) return res.status(400).json({ error: 'Minutes required' });
 
     try {
-        const timeRow = db.prepare('SELECT value FROM campaign_state WHERE key = "current_time"').get();
+        const timeRow = db.prepare(`SELECT value FROM campaign_state WHERE key = 'current_time'`).get();
         let time = JSON.parse(timeRow.value);
 
         time.minute += minutes;
@@ -46,8 +46,8 @@ router.post('/advance-time', (req, res) => {
             time.year += 1;
         }
 
-        db.prepare('UPDATE campaign_state SET value = ? WHERE key = "current_time"').run(JSON.stringify(time));
-        
+        db.prepare(`UPDATE campaign_state SET value = ? WHERE key = 'current_time'`).run(JSON.stringify(time));
+
         res.json(time);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -63,7 +63,7 @@ router.post('/weather', async (req, res) => {
         if (!weather) {
             return res.status(502).json({ error: 'Ollama failed to generate weather. Is it running?' });
         }
-        db.prepare('UPDATE campaign_state SET value = ? WHERE key = "current_weather"').run(JSON.stringify(weather));
+        db.prepare(`UPDATE campaign_state SET value = ? WHERE key = 'current_weather'`).run(JSON.stringify(weather));
         res.json(weather);
     } catch (err) {
         res.status(500).json({ error: err.message });

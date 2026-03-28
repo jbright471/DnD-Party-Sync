@@ -9,10 +9,16 @@ import { Badge } from '../components/ui/badge';
 import { Textarea } from '../components/ui/textarea';
 import { ActionLog } from '../components/ActionLog';
 import { EffectTimeline } from '../components/EffectTimeline';
+import { EffectDiffEngine } from '../components/EffectDiffEngine';
+import { SyncAuditView } from '../components/SyncAuditView';
 import { DmAutomationPanel } from '../components/DmAutomationPanel';
 import { DmPrepPanel } from '../components/DmPrepPanel';
 import { InitiativeTracker } from '../components/InitiativeTracker';
 import { DiceRoller } from '../components/DiceRoller';
+import { DMRollFeed } from '../components/DMRollFeed';
+import { AnimatedToggle } from '../components/AnimatedToggle';
+import { useHpFlash } from '../hooks/useHpFlash';
+import { LootDropModal } from '../components/LootDropModal';
 import { WorldPanel } from '../components/WorldPanel';
 import { QuestTracker } from '../components/QuestTracker';
 import { Soundboard } from '../components/Soundboard';
@@ -38,9 +44,13 @@ export default function DmDashboard() {
   const { state } = useGame();
   const party = state.characters;
 
+  // HP flash effects — tracks which character cards are flashing (damage/heal)
+  const hpFlashes = useHpFlash();
+
   // Modal states
   const [showNpcManager, setShowNpcManager] = useState(false);
   const [showLootManager, setShowLootManager] = useState(false);
+  const [showLootDrop, setShowLootDrop] = useState(false);
   const [showBuffManager, setShowBuffManager] = useState(false);
   const [showEncounterLibrary, setShowEncounterLibrary] = useState(false);
   const [showSpawner, setShowSpawner] = useState(false);
@@ -121,6 +131,7 @@ export default function DmDashboard() {
       {/* Modals */}
       <NPCManager open={showNpcManager} onClose={() => setShowNpcManager(false)} isDm />
       <LootManager open={showLootManager} onClose={() => setShowLootManager(false)} />
+      <LootDropModal open={showLootDrop} onClose={() => setShowLootDrop(false)} />
       <BuffManagerModal open={showBuffManager} onClose={() => setShowBuffManager(false)} />
       <EncounterBuilderModal
         open={showEncounterLibrary}
@@ -175,11 +186,12 @@ export default function DmDashboard() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 bg-secondary/30 border border-border rounded-lg px-3 py-1.5">
-            <span className="text-[10px] font-bold text-gold uppercase tracking-tighter">DM Queue</span>
-            <Switch
+            <AnimatedToggle
               checked={state.isApprovalMode}
-              onCheckedChange={v => socket.emit('toggle_approval_mode', v)}
+              onChange={v => socket.emit('toggle_approval_mode', v)}
+              label="DM Queue"
             />
+            <span className="text-[10px] text-muted-foreground/50 uppercase tracking-tighter">Automation</span>
           </div>
           <Button
             variant="outline"
@@ -220,7 +232,7 @@ export default function DmDashboard() {
                 <Eye className="h-5 w-5" /> God-Eye View
               </CardTitle>
               <div className="flex items-center gap-2 flex-wrap">
-                <Button size="sm" variant="outline" className="h-7 text-[10px] text-gold border-gold/30" onClick={() => setShowLootManager(true)}>
+                <Button size="sm" variant="outline" className="h-7 text-[10px] text-gold border-gold/30" onClick={() => setShowLootDrop(true)}>
                   <Gem className="h-3 w-3 mr-1" /> Loot
                 </Button>
                 <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => setShowNpcManager(true)}>
@@ -247,8 +259,16 @@ export default function DmDashboard() {
               <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
                 {party.map(char => {
                   const hpPercent = (char.hp.current / char.hp.max) * 100;
+                  const flash = hpFlashes.get(char.id);
                   return (
-                    <div key={char.id} className="bg-secondary/30 border border-border/50 rounded-lg p-3 hover:border-primary/30 transition-colors flex flex-col gap-2">
+                    <div
+                      key={char.id}
+                      className={[
+                        'bg-secondary/30 border border-border/50 rounded-lg p-3 hover:border-primary/30 transition-colors flex flex-col gap-2',
+                        flash === 'damage' ? 'animate-flash-damage' : '',
+                        flash === 'heal'   ? 'animate-flash-heal'   : '',
+                      ].join(' ')}
+                    >
                       <div className="flex justify-between items-start">
                         <div className="min-w-0">
                           <span className="text-sm font-bold font-display block truncate">{char.name}</span>
@@ -267,7 +287,7 @@ export default function DmDashboard() {
                       </div>
                       <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
                         <div
-                          className={`h-full transition-all duration-500 ${hpPercent < 30 ? 'bg-destructive' : 'bg-health'}`}
+                          className={`h-full transition-all duration-500 ease-out ${hpPercent < 30 ? 'bg-destructive' : 'bg-health'}`}
                           style={{ width: `${hpPercent}%` }}
                         />
                       </div>
@@ -340,14 +360,29 @@ export default function DmDashboard() {
               <CardTitle className="font-display text-sm">Dice Roller</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <DiceRoller characterName="DM" />
+              <DiceRoller characterName="DM" showPrivateToggle />
             </CardContent>
           </Card>
+
+          <Card className="border-primary/20 bg-secondary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-sm flex items-center gap-2">
+                Roll Feed
+                <span className="text-[9px] font-normal text-muted-foreground/50 uppercase tracking-widest">live</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <DMRollFeed maxHeight={340} />
+            </CardContent>
+          </Card>
+
           <Soundboard />
           <div className="h-64">
             <ActionLog />
           </div>
           <EffectTimeline />
+          <EffectDiffEngine />
+          <SyncAuditView />
         </div>
       </div>
 

@@ -104,4 +104,67 @@ router.delete('/:id', (req, res) => {
     }
 });
 
+// ── Weapon Attack CRUD ──────────────────────────────────────────────────────
+
+function readAttacks(characterId) {
+    const char = db.prepare('SELECT data_json FROM characters WHERE id = ?').get(characterId);
+    if (!char) return null;
+    try {
+        const data = JSON.parse(char.data_json || '{}');
+        return Array.isArray(data.attacks) ? data.attacks : [];
+    } catch { return []; }
+}
+
+function writeAttacks(characterId, attacks) {
+    const char = db.prepare('SELECT data_json FROM characters WHERE id = ?').get(characterId);
+    if (!char) return false;
+    let data = {};
+    try { data = JSON.parse(char.data_json || '{}'); } catch { data = {}; }
+    data.attacks = attacks;
+    db.prepare('UPDATE characters SET data_json = ? WHERE id = ?').run(JSON.stringify(data), characterId);
+    return true;
+}
+
+// GET /api/characters/:id/weapons
+router.get('/:id/weapons', (req, res) => {
+    try {
+        const attacks = readAttacks(req.params.id);
+        if (attacks === null) return res.status(404).json({ error: 'Character not found' });
+        res.json(attacks);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/characters/:id/weapons
+router.post('/:id/weapons', (req, res) => {
+    try {
+        const attacks = readAttacks(req.params.id);
+        if (attacks === null) return res.status(404).json({ error: 'Character not found' });
+        const weapon = req.body;
+        if (!weapon.id || !weapon.name) return res.status(400).json({ error: 'id and name required' });
+        // Prevent duplicate ids
+        const existing = attacks.findIndex(a => a.id === weapon.id);
+        if (existing >= 0) attacks[existing] = weapon;
+        else attacks.push(weapon);
+        writeAttacks(req.params.id, attacks);
+        res.status(201).json({ success: true, weapon });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/characters/:id/weapons/:weaponId
+router.delete('/:id/weapons/:weaponId', (req, res) => {
+    try {
+        const attacks = readAttacks(req.params.id);
+        if (attacks === null) return res.status(404).json({ error: 'Character not found' });
+        const filtered = attacks.filter(a => a.id !== req.params.weaponId);
+        writeAttacks(req.params.id, filtered);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = { router, getAllCharacters };

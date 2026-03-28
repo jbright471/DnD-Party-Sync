@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import socket from '../socket';
-import { Character, Party, ActionLogEntry } from '../types/character';
+import { Character, Party, ActionLogEntry, SharedLootItem } from '../types/character';
 import { EffectEvent } from '../types/effects';
 
 interface Note {
@@ -21,6 +21,7 @@ interface GameState {
   actionLog: ActionLogEntry[];
   isApprovalMode: boolean;
   effectEvents: EffectEvent[];
+  sharedLoot: SharedLootItem[];
   isDm: boolean;
   dmToken: string | null;
 }
@@ -51,6 +52,7 @@ function normaliseCharacter(raw: any): Character {
     initiative: raw.initiativeBonus || 0,
     activeBuffs: raw.buffs || [],
     concentratingOn: raw.concentratingOn,
+    attacks: raw.attacks || [],
     raw_dndbeyond_json: raw.raw_dndbeyond_json
   };
 }
@@ -70,6 +72,7 @@ const GameContext = createContext<{
     actionLog: [],
     isApprovalMode: false,
     effectEvents: [],
+    sharedLoot: [],
     isDm: false,
     dmToken: null,
   },
@@ -86,6 +89,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [isApprovalMode, setIsApprovalMode] = useState(false);
   const [effectEvents, setEffectEvents] = useState<EffectEvent[]>([]);
+  const [sharedLoot, setSharedLoot] = useState<SharedLootItem[]>([]);
   const [isDm, setIsDm] = useState<boolean>(() => {
     return !!localStorage.getItem('dm_token');
   });
@@ -131,6 +135,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setEffectEvents(data);
     });
 
+    socket.on('party_loot_state', (data: SharedLootItem[]) => {
+      setSharedLoot(data);
+    });
+
     // Re-join DM room on reconnect
     socket.on('connect', () => {
       const token = localStorage.getItem('dm_token');
@@ -138,9 +146,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
         socket.emit('dm_join_room', { dmToken: token });
       }
       socket.emit('refresh_party');
+      socket.emit('refresh_party_loot');
     });
 
     socket.emit('refresh_party');
+    socket.emit('refresh_party_loot');
 
     // Load initial effect timeline
     fetch('/api/effect-timeline')
@@ -161,6 +171,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       socket.off('notes_state');
       socket.off('approval_mode');
       socket.off('timeline_update');
+      socket.off('party_loot_state');
       socket.off('connect');
     };
   }, []);
@@ -190,6 +201,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     actionLog,
     isApprovalMode,
     effectEvents,
+    sharedLoot,
     isDm,
     dmToken,
   };

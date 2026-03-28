@@ -1,3 +1,40 @@
+export interface RollFeedEvent {
+  id: number;
+  actor: string;
+  characterId: string | null;
+  /** Short display name, e.g. "Giant Slayer Longbow" or "Stealth" */
+  label: string;
+  source: string | null;
+  /** e.g. "Attack Roll", "Damage Roll", "Skill Check", "Saving Throw", "Roll" */
+  rollType: string;
+  sides: number;
+  count: number;
+  modifier: number;
+  total: number;
+  rolls: number[];
+  damageType: string | null;
+  isPrivate: boolean;
+  timestamp: string;
+}
+
+export const ROLL_TYPE_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  'Attack Roll':     { label: 'ATK',  color: 'text-amber-300',  bg: 'bg-amber-950/50',  border: 'border-amber-700/40' },
+  'Critical Damage': { label: 'CRIT', color: 'text-red-300',    bg: 'bg-red-950/60',    border: 'border-red-600/60' },
+  'Damage Roll':     { label: 'DMG',  color: 'text-red-400',    bg: 'bg-red-950/40',    border: 'border-red-800/40' },
+  'Skill Check':     { label: 'SKILL',color: 'text-blue-400',   bg: 'bg-blue-950/40',   border: 'border-blue-800/40' },
+  'Saving Throw':    { label: 'SAVE', color: 'text-purple-400', bg: 'bg-purple-950/40', border: 'border-purple-800/40' },
+  'Ability Check':   { label: 'ABIL', color: 'text-cyan-400',   bg: 'bg-cyan-950/40',   border: 'border-cyan-800/40' },
+  'Initiative':      { label: 'INIT', color: 'text-yellow-400', bg: 'bg-yellow-950/40', border: 'border-yellow-800/40' },
+  'Roll':            { label: 'ROLL', color: 'text-slate-400',  bg: 'bg-slate-900/40',  border: 'border-slate-700/40' },
+  'HP Damage':       { label: 'DMG',  color: 'text-red-400',    bg: 'bg-red-950/40',    border: 'border-red-800/40' },
+  'HP Heal':         { label: 'HEAL', color: 'text-green-400',  bg: 'bg-green-950/40',  border: 'border-green-800/40' },
+  'Loot Claimed':    { label: 'LOOT', color: 'text-gold',      bg: 'bg-amber-950/40',  border: 'border-amber-700/40' },
+};
+
+export function getRollTypeMeta(rollType: string) {
+  return ROLL_TYPE_META[rollType] ?? ROLL_TYPE_META['Roll'];
+}
+
 export interface EffectEvent {
   id: number;
   session_round: number;

@@ -386,6 +386,7 @@ function getResolvedCharacterState(db, characterId) {
     deathSaves: state.deathSaves,
     inventory: char.inventory,
     homebrewInventory: char.homebrewInventory,
+    attacks: char.attacks || [],
     tokenImage: char.tokenImage,
     spells: char.spells,
     features: char.features,
