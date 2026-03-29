@@ -322,6 +322,25 @@ function runMigrations() {
   // Seed DM token placeholder (real value set on first DM login)
   db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('dm_token', '')`);
 
+  // ---- Phase 15.0: Condition Duration Tracking ----
+  addColumnSafe('session_states', 'condition_durations_json', "TEXT DEFAULT '{}'");
+
+  // ---- Phase 15.0: Audit Log, Idempotency & Resource Authority ----
+  addColumnSafe('effect_events', 'request_id', 'TEXT DEFAULT NULL');
+  addColumnSafe('effect_events', 'description', 'TEXT DEFAULT NULL');
+  addColumnSafe('effect_events', 'is_reversed', 'INTEGER DEFAULT 0');
+  addColumnSafe('effect_events', 'reversed_by_event_id', 'INTEGER DEFAULT NULL');
+
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_effect_events_request_id ON effect_events(request_id) WHERE request_id IS NOT NULL;`);
+  } catch (_e) {}
+
+  // Seed default resource permissions
+  db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('resource_permissions', '{"loot_claim":"open","cross_player_effects":"open","inventory_transfer":"open"}')`);
+
+  // ---- Phase 15.1: Compendium — store full stats on spawned monsters ----
+  addColumnSafe('initiative_tracker', 'stats_json', "TEXT DEFAULT NULL");
+
   console.log('[DB] Migrations complete.');
 }
 

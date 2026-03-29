@@ -15,10 +15,18 @@ import { StatChecks } from '../components/StatChecks';
 import { ActionsPanel } from '../components/ActionsPanel';
 import { ConditionBadges } from '../components/ConditionBadges';
 import { SharedLootPool } from '../components/SharedLootPool';
-import { useState } from 'react';
+import { RestManager } from '../components/RestManager';
+import { Spellbook } from '../components/Spellbook';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { backend } from '../integrations/backend';
 import socket from '../socket';
+
+interface TickConditionsPayload {
+  characterId: number;
+  expired: string[];
+  remaining: { name: string; duration: number }[];
+}
 
 const ABILITY_LABELS: Record<string, string> = {
   STR: 'Strength', DEX: 'Dexterity', CON: 'Constitution',
@@ -34,6 +42,32 @@ export default function CharacterSheet() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [parsingItem, setIsParsingItem] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // ── Listen for condition tick events on this character's turn ──
+  useEffect(() => {
+    const handleTick = (payload: TickConditionsPayload) => {
+      if (String(payload.characterId) !== id) return;
+
+      for (const condName of payload.expired) {
+        const titleCase = condName.charAt(0).toUpperCase() + condName.slice(1);
+        toast(`${titleCase} has worn off`, {
+          description: 'The condition expired at the start of your turn.',
+        });
+      }
+
+      for (const r of payload.remaining) {
+        const titleCase = r.name.charAt(0).toUpperCase() + r.name.slice(1);
+        if (r.duration <= 1) {
+          toast(`${titleCase} expiring soon`, {
+            description: `${r.duration} round remaining.`,
+          });
+        }
+      }
+    };
+
+    socket.on('tick_conditions', handleTick);
+    return () => { socket.off('tick_conditions', handleTick); };
+  }, [id]);
 
   if (!character) {
     return (
@@ -147,6 +181,7 @@ export default function CharacterSheet() {
             </div>
           </div>
           <div className="flex gap-2 shrink-0">
+            <RestManager character={character} />
             <Button variant="outline" size="sm" onClick={handleSync} disabled={isSyncing}>
               <RefreshCw className={`h-4 w-4 mr-1 ${isSyncing ? 'animate-spin' : ''}`} />
               Sync DDB
@@ -310,6 +345,9 @@ export default function CharacterSheet() {
 
           {/* Attack Actions */}
           <ActionsPanel character={character} />
+
+          {/* Spellbook */}
+          <Spellbook character={character} />
 
           {/* Party Loot Pool — shared items available to claim */}
           <SharedLootPool characterId={character.id} characterName={character.name} />

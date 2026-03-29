@@ -43,12 +43,28 @@ export interface SharedLootItem {
 
 export type DndClass = 'Barbarian' | 'Bard' | 'Cleric' | 'Druid' | 'Fighter' | 'Monk' | 'Paladin' | 'Ranger' | 'Rogue' | 'Sorcerer' | 'Warlock' | 'Wizard';
 
+export type SpellSchool =
+  | 'Abjuration' | 'Conjuration' | 'Divination' | 'Enchantment'
+  | 'Evocation' | 'Illusion' | 'Necromancy' | 'Transmutation';
+
 export interface Spell {
   name: string;
+  /** 0 = cantrip, 1–9 = leveled */
   level: number;
-  school?: string;
+  school?: SpellSchool | string;
   prepared?: boolean;
   isConcentration?: boolean;
+  castingTime?: string;
+  range?: string;
+  components?: string;
+  duration?: string;
+  description?: string;
+  damageDice?: string;
+  damageType?: DamageType | string;
+  saveAbility?: AbilityScore;
+  isRitual?: boolean;
+  source?: string;
+  alwaysPrepared?: boolean;
 }
 
 export interface Ability {
@@ -230,6 +246,8 @@ export interface Character {
   acBreakdown?: any[];
   abilityScores: AbilityScores;
   conditions: string[];
+  /** Maps lowercase condition name → remaining rounds. Missing = permanent. */
+  conditionDurations: Record<string, number>;
   equipment: Equipment[];
   homebrewInventory: Equipment[];
   spellSlots: SpellSlots;
@@ -243,6 +261,10 @@ export interface Character {
   raw_dndbeyond_json?: string;
   /** Structured attack actions — populated from DDB import or manual entry */
   attacks?: WeaponAttack[];
+  /** Total hit dice by type, e.g. { "d10": 8 } */
+  hitDice: Record<string, number>;
+  /** Hit dice spent this rest cycle, e.g. { "d10": 2 } */
+  hitDiceUsed: Record<string, number>;
 }
 
 // ... rest of the file helpers remain the same
@@ -325,6 +347,9 @@ export function createDefaultCharacter(id: string): Character {
     ac: 10,
     abilityScores: { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 },
     conditions: [],
+    conditionDurations: {},
+    hitDice: {},
+    hitDiceUsed: {},
     equipment: [],
     homebrewInventory: [],
     spellSlots: {},

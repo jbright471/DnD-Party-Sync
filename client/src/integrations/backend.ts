@@ -20,8 +20,8 @@ export const backend = {
   },
 
   // Conditions
-  applyCondition: (characterId: string, condition: string) => {
-    guardOnline(() => socket.emit('apply_condition', { characterId: parseInt(characterId), condition }));
+  applyCondition: (characterId: string, condition: string, durationRounds?: number) => {
+    guardOnline(() => socket.emit('apply_condition', { characterId: parseInt(characterId), condition, durationRounds }));
   },
 
   removeCondition: (characterId: string, condition: string) => {
@@ -33,12 +33,31 @@ export const backend = {
     guardOnline(() => socket.emit('use_spell_slot', { characterId: parseInt(characterId), slotLevel }));
   },
 
+  castSpell: (characterId: string, opts: {
+    spellName: string;
+    spellLevel: number;
+    castAtLevel: number;
+    isConcentration?: boolean;
+    damageDice?: string;
+    damageType?: string;
+  }) => {
+    guardOnline(() => socket.emit('cast_spell', {
+      characterId: parseInt(characterId),
+      ...opts,
+    }));
+  },
+
   castConcentrationSpell: (characterId: string, spellName: string, slotLevel?: number) => {
     guardOnline(() => socket.emit('cast_concentration_spell', { characterId: parseInt(characterId), spellName, slotLevel }));
   },
 
   dropConcentration: (characterId: string) => {
     guardOnline(() => socket.emit('drop_concentration', { characterId: parseInt(characterId) }));
+  },
+
+  // Hit Dice
+  spendHitDie: (characterId: string, dieType: string) => {
+    guardOnline(() => socket.emit('spend_hit_die', { characterId: parseInt(characterId), dieType }));
   },
 
   // Rests

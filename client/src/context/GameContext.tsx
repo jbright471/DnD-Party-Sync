@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import socket from '../socket';
-import { Character, Party, ActionLogEntry, SharedLootItem } from '../types/character';
+import { Character, Party, ActionLogEntry, SharedLootItem, SpellSlots } from '../types/character';
 import { EffectEvent } from '../types/effects';
 
 interface Note {
@@ -10,6 +10,12 @@ interface Note {
   content: string;
   updated_by: string;
   updated_at: string;
+}
+
+export interface ResourcePermissions {
+  loot_claim: 'open' | 'dm_approval' | 'owner_only';
+  cross_player_effects: 'open' | 'dm_approval';
+  inventory_transfer: 'open' | 'dm_approval';
 }
 
 interface GameState {
@@ -24,6 +30,18 @@ interface GameState {
   sharedLoot: SharedLootItem[];
   isDm: boolean;
   dmToken: string | null;
+  permissions: ResourcePermissions;
+}
+
+function mergeSpellSlots(maxMap: Record<string, number> | undefined, usedMap: Record<string, number> | undefined): SpellSlots {
+  const slots: SpellSlots = {};
+  if (!maxMap) return slots;
+  for (const [lvl, max] of Object.entries(maxMap)) {
+    const level = Number(lvl);
+    if (level < 1 || level > 9 || !max) continue;
+    slots[level] = { max: max as number, used: (usedMap?.[lvl] as number) || 0 };
+  }
+  return slots;
 }
 
 function normaliseCharacter(raw: any): Character {
@@ -42,9 +60,10 @@ function normaliseCharacter(raw: any): Character {
     abilityScores: raw.abilityScores || { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 },
     // Server stores conditions lowercase; normalise to Title Case to match DND_CONDITIONS
     conditions: (raw.conditions || []).map((c: string) => c.charAt(0).toUpperCase() + c.slice(1)),
+    conditionDurations: raw.conditionDurations || {},
     equipment: raw.inventory || [],
     homebrewInventory: raw.homebrewInventory || [],
-    spellSlots: raw.spellSlotsMax || {},
+    spellSlots: mergeSpellSlots(raw.spellSlotsMax, raw.spellSlotsUsed),
     spells: raw.spells || [],
     abilities: raw.features || [],
     proficiencyBonus: raw.proficiencyBonus || 2,
@@ -53,7 +72,9 @@ function normaliseCharacter(raw: any): Character {
     activeBuffs: raw.buffs || [],
     concentratingOn: raw.concentratingOn,
     attacks: raw.attacks || [],
-    raw_dndbeyond_json: raw.raw_dndbeyond_json
+    raw_dndbeyond_json: raw.raw_dndbeyond_json,
+    hitDice: raw.hitDice || {},
+    hitDiceUsed: raw.hitDiceUsed || {},
   };
 }
 
@@ -75,6 +96,7 @@ const GameContext = createContext<{
     sharedLoot: [],
     isDm: false,
     dmToken: null,
+    permissions: { loot_claim: 'open', cross_player_effects: 'open', inventory_transfer: 'open' },
   },
   socket: null,
   setDmAuth: () => {},
@@ -90,6 +112,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [isApprovalMode, setIsApprovalMode] = useState(false);
   const [effectEvents, setEffectEvents] = useState<EffectEvent[]>([]);
   const [sharedLoot, setSharedLoot] = useState<SharedLootItem[]>([]);
+  const [permissions, setPermissions] = useState<ResourcePermissions>({ loot_claim: 'open', cross_player_effects: 'open', inventory_transfer: 'open' });
   const [isDm, setIsDm] = useState<boolean>(() => {
     return !!localStorage.getItem('dm_token');
   });
@@ -139,6 +162,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setSharedLoot(data);
     });
 
+    socket.on('permissions_state', (data: ResourcePermissions) => {
+      setPermissions(data);
+    });
+
     // Re-join DM room on reconnect
     socket.on('connect', () => {
       const token = localStorage.getItem('dm_token');
@@ -172,6 +199,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       socket.off('approval_mode');
       socket.off('timeline_update');
       socket.off('party_loot_state');
+      socket.off('permissions_state');
       socket.off('connect');
     };
   }, []);
@@ -204,6 +232,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     sharedLoot,
     isDm,
     dmToken,
+    permissions,
   };
 
   return (

@@ -11,6 +11,8 @@ import { ActionLog } from '../components/ActionLog';
 import { EffectTimeline } from '../components/EffectTimeline';
 import { EffectDiffEngine } from '../components/EffectDiffEngine';
 import { SyncAuditView } from '../components/SyncAuditView';
+import { AuditLog } from '../components/AuditLog';
+import { PermissionConfig } from '../components/PermissionConfig';
 import { DmAutomationPanel } from '../components/DmAutomationPanel';
 import { DmPrepPanel } from '../components/DmPrepPanel';
 import { InitiativeTracker } from '../components/InitiativeTracker';
@@ -26,6 +28,9 @@ import { NPCManager } from '../components/NPCManager';
 import { LootManager } from '../components/LootManager';
 import { BuffManagerModal } from '../components/BuffManagerModal';
 import { EncounterBuilderModal } from '../components/EncounterBuilderModal';
+import { Compendium } from '../components/Compendium';
+import { ActionableLoreMessage } from '../components/ActionableLoreMessage';
+import { parseLoreMessage } from '../lib/loreParser';
 import {
   Eye, Swords, Users, Gem, Scroll, Sparkles, Map,
   FlagOff, Plus, BookOpen, ShieldAlert, Send, Zap, NotebookPen, StickyNote
@@ -55,6 +60,7 @@ export default function DmDashboard() {
   const [showEncounterLibrary, setShowEncounterLibrary] = useState(false);
   const [showSpawner, setShowSpawner] = useState(false);
   const [showAutomation, setShowAutomation] = useState(false);
+  const [showCompendium, setShowCompendium] = useState(false);
   const [prepContext, setPrepContext] = useState<{ type: string; label?: string } | null>(null);
   const openPrep = (type = 'general', label?: string) => setPrepContext({ type, label });
 
@@ -99,7 +105,8 @@ export default function DmDashboard() {
     }
   };
 
-  const sendLoreToNotes = (text: string) => {
+  const sendLoreToNotes = (rawText: string) => {
+    const { text } = parseLoreMessage(rawText);
     socket.emit('create_note', { category: 'lore', title: 'AI Generated Lore', content: text, updated_by: 'DM' });
     toast.success('Sent to Party Notes!');
   };
@@ -139,6 +146,7 @@ export default function DmDashboard() {
         onStartEncounter={handleStartEncounter}
       />
       <DmAutomationPanel open={showAutomation} onClose={() => setShowAutomation(false)} />
+      <Compendium open={showCompendium} onClose={() => setShowCompendium(false)} />
       <DmPrepPanel
         isOpen={prepContext !== null}
         onClose={() => setPrepContext(null)}
@@ -193,6 +201,14 @@ export default function DmDashboard() {
             />
             <span className="text-[10px] text-muted-foreground/50 uppercase tracking-tighter">Automation</span>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowCompendium(true)}
+            className="font-display border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+          >
+            <BookOpen className="h-4 w-4 mr-1" /> Compendium
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -381,6 +397,8 @@ export default function DmDashboard() {
             <ActionLog />
           </div>
           <EffectTimeline />
+          <AuditLog isDm={true} />
+          <PermissionConfig />
           <EffectDiffEngine />
           <SyncAuditView />
         </div>
@@ -432,7 +450,7 @@ export default function DmDashboard() {
               {loreHistory.map((entry, idx) => (
                 <div key={idx} className="bg-secondary/20 border border-border/40 rounded-lg p-3 space-y-2">
                   <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider italic">{entry.prompt}</div>
-                  <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">{entry.response}</p>
+                  <ActionableLoreMessage rawText={entry.response} />
                   <div className="flex items-center justify-between">
                     <span className="text-[9px] text-muted-foreground/50 font-mono">{entry.timestamp}</span>
                     <Button

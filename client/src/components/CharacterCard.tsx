@@ -141,11 +141,14 @@ export function CharacterCard({ character, onClick, selected, compact }: Charact
               <span className="font-display">Conditions</span>
             </div>
             <div className="flex flex-wrap gap-1">
-              {character.conditions.map(c => (
-                <Badge key={c} variant="destructive" className="text-[10px] px-1.5 py-0.5">
-                  {c}
-                </Badge>
-              ))}
+              {character.conditions.map(c => {
+                const dur = character.conditionDurations?.[c.toLowerCase()];
+                return (
+                  <Badge key={c} variant="destructive" className="text-[10px] px-1.5 py-0.5">
+                    {c}{dur != null && <span className="ml-0.5 opacity-70">({dur})</span>}
+                  </Badge>
+                );
+              })}
             </div>
           </div>
         )}

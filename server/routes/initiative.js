@@ -50,19 +50,20 @@ router.get('/tracker', (req, res) => {
 });
 
 function spawnMonster(monsterData) {
-    const { name, hp, ac, initiative_mod, is_hidden } = monsterData;
-    
+    const { name, hp, ac, initiative_mod, is_hidden, stats } = monsterData;
+
     // Roll initiative: d20 + modifier
     const initRoll = Math.floor(Math.random() * 20) + 1 + (initiative_mod || 0);
     const instanceId = crypto.randomUUID();
+    const statsJson = stats ? JSON.stringify(stats) : null;
 
     const insertStmt = db.prepare(`
-        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, instance_id)
-        VALUES (?, 'monster', ?, ?, ?, ?, 0, ?, 0, ?)
+        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, instance_id, stats_json)
+        VALUES (?, 'monster', ?, ?, ?, ?, 0, ?, 0, ?, ?)
     `);
 
-    insertStmt.run(name, initRoll, hp || 10, hp || 10, ac || 10, is_hidden ? 1 : 0, instanceId);
-    
+    insertStmt.run(name, initRoll, hp || 10, hp || 10, ac || 10, is_hidden ? 1 : 0, instanceId, statsJson);
+
     resortTracker();
     return getTrackerState();
 }
@@ -135,12 +136,18 @@ function getTrackerState() {
             concentrating_on = session?.concentrating_on ?? null;
         }
 
+        let parsedStats = null;
+        if (entity.stats_json) {
+            try { parsedStats = JSON.parse(entity.stats_json); } catch (_e) {}
+        }
+
         return {
             ...entity,
             conditions,
             concentrating_on,
+            stats_json: parsedStats,
             // HP Ghosting: if hidden or monster, we can flag it for the frontend to obscure
-            hp_status: entity.current_hp <= 0 ? 'Dead' : 
+            hp_status: entity.current_hp <= 0 ? 'Dead' :
                        (entity.current_hp / entity.max_hp <= 0.25) ? 'Critical' :
                        (entity.current_hp / entity.max_hp <= 0.5) ? 'Bloodied' : 'Healthy'
         };
@@ -160,17 +167,46 @@ function advanceTurn() {
     return getTrackerState();
 }
 
+function previousTurn() {
+    const entries = getTrackerState();
+    if (entries.length === 0) return [];
+
+    const activeIdx = entries.findIndex(e => e.is_active);
+    db.prepare('UPDATE initiative_tracker SET is_active = 0').run();
+
+    const prevIdx = activeIdx <= 0 ? entries.length - 1 : activeIdx - 1;
+    db.prepare('UPDATE initiative_tracker SET is_active = 1 WHERE id = ?').run(entries[prevIdx].id);
+
+    return getTrackerState();
+}
+
+function reorderEntry(trackerId, direction) {
+    const entries = db.prepare('SELECT id, sort_order FROM initiative_tracker ORDER BY sort_order ASC').all();
+    const idx = entries.findIndex(e => e.id === trackerId);
+    if (idx < 0) return;
+
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= entries.length) return;
+
+    // Swap sort_order values
+    const updateStmt = db.prepare('UPDATE initiative_tracker SET sort_order = ? WHERE id = ?');
+    updateStmt.run(entries[swapIdx].sort_order, entries[idx].id);
+    updateStmt.run(entries[idx].sort_order, entries[swapIdx].id);
+}
+
 function endEncounter() {
     db.prepare('UPDATE initiative_tracker SET is_active = 0').run();
     db.prepare('DELETE FROM initiative_tracker').run();
 }
 
-module.exports = { 
-    router, 
-    startEncounter, 
-    getTrackerState, 
-    advanceTurn, 
-    endEncounter, 
+module.exports = {
+    router,
+    startEncounter,
+    getTrackerState,
+    advanceTurn,
+    previousTurn,
+    endEncounter,
     resortTracker,
-    spawnMonster 
+    reorderEntry,
+    spawnMonster
 };

@@ -29,6 +29,7 @@ export const ROLL_TYPE_META: Record<string, { label: string; color: string; bg: 
   'HP Damage':       { label: 'DMG',  color: 'text-red-400',    bg: 'bg-red-950/40',    border: 'border-red-800/40' },
   'HP Heal':         { label: 'HEAL', color: 'text-green-400',  bg: 'bg-green-950/40',  border: 'border-green-800/40' },
   'Loot Claimed':    { label: 'LOOT', color: 'text-gold',      bg: 'bg-amber-950/40',  border: 'border-amber-700/40' },
+  'System':          { label: 'SYS',  color: 'text-slate-300',  bg: 'bg-slate-900/40',  border: 'border-slate-700/40' },
 };
 
 export function getRollTypeMeta(rollType: string) {
@@ -48,6 +49,10 @@ export interface EffectEvent {
   payload_json: string;
   parent_event_id: number | null;
   source_preset_id: number | null;
+  request_id: string | null;
+  description: string | null;
+  is_reversed: number;
+  reversed_by_event_id: number | null;
   created_at: string;
 }
 
@@ -61,10 +66,19 @@ export const EVENT_META: Record<string, { label: string; color: string; bg: stri
   automation_trigger:   { label: 'AUTO',   color: 'text-orange-400',  bg: 'bg-orange-950/40 border-orange-800/40' },
   concentration_check:  { label: 'CON?',   color: 'text-blue-400',    bg: 'bg-blue-950/40 border-blue-800/40' },
   concentration_broken: { label: 'CON!',   color: 'text-red-300',     bg: 'bg-red-950/60 border-red-700/60' },
+  temp_hp:              { label: 'TMP',    color: 'text-cyan-300',    bg: 'bg-cyan-950/40 border-cyan-800/40' },
+  concentration_start:  { label: 'CONC',   color: 'text-violet-400',  bg: 'bg-violet-950/40 border-violet-800/40' },
+  concentration_dropped:{ label: '-CON',   color: 'text-violet-300',  bg: 'bg-violet-950/30 border-violet-700/30' },
+  spell_slot_used:      { label: 'SLOT',   color: 'text-indigo-400',  bg: 'bg-indigo-950/40 border-indigo-800/40' },
+  loot_claimed:         { label: 'LOOT',   color: 'text-amber-300',   bg: 'bg-amber-950/40 border-amber-700/40' },
+  rest:                 { label: 'REST',   color: 'text-emerald-300', bg: 'bg-emerald-950/40 border-emerald-800/40' },
   unknown:              { label: '???',    color: 'text-muted-foreground', bg: 'bg-secondary/20 border-border/40' },
 };
 
 export function getEventSummary(event: EffectEvent): string {
+  // Prefer human-readable description from audit events
+  if (event.description) return event.description;
+
   try {
     const p = JSON.parse(event.payload_json || '{}');
     switch (event.event_type) {
@@ -78,12 +92,26 @@ export function getEventSummary(event: EffectEvent): string {
         return `${p.condition} removed from ${event.target_name}`;
       case 'buff_applied':
         return `${p.buffData?.name ?? p.name ?? 'Buff'} → ${event.target_name}`;
+      case 'buff_removed':
+        return `Buff removed from ${event.target_name}`;
       case 'automation_trigger':
         return `Triggered: ${p.presetName ?? event.actor}`;
       case 'concentration_check':
         return `${event.target_name} CON save vs DC ${p.dc} — rolled ${p.total} (${p.passed ? 'PASS' : 'FAIL'})`;
       case 'concentration_broken':
         return `${event.target_name} lost concentration on ${p.spellName}`;
+      case 'temp_hp':
+        return `${event.target_name} gained ${p.value} temp HP`;
+      case 'concentration_start':
+        return `${event.target_name} concentrating on ${p.spellName}`;
+      case 'concentration_dropped':
+        return `${event.target_name} dropped concentration on ${p.spellName}`;
+      case 'spell_slot_used':
+        return `${event.target_name} used level ${p.slotLevel} slot`;
+      case 'loot_claimed':
+        return `${event.actor} claimed ${p.itemName}`;
+      case 'rest':
+        return `${event.target_name} took a ${p.restType} rest`;
       default:
         return event.target_name ? `→ ${event.target_name}` : event.actor;
     }

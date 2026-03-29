@@ -157,6 +157,75 @@ function calculateAbilityScore(statId, statName, data) {
     return total;
 }
 
+const COMPONENT_MAP = { 1: 'V', 2: 'S', 3: 'M' };
+const SAVE_STAT_MAP = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
+
+function stripHtml(html) {
+    return (html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+}
+
+function parseSpellList(data) {
+    const seen = new Set();
+    const spells = [];
+
+    function addSpell(raw) {
+        const def = raw?.definition;
+        if (!def?.name) return;
+        const key = def.name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const components = (def.components || [])
+            .map(c => COMPONENT_MAP[c]).filter(Boolean).join(', ');
+
+        let durationStr = '';
+        if (def.duration) {
+            const d = def.duration;
+            if (d.durationType === 'Instantaneous' || d.durationType === 'Special') {
+                durationStr = d.durationType;
+            } else if (d.durationInterval && d.durationUnit) {
+                const prefix = def.concentration ? 'Concentration, up to ' : '';
+                durationStr = `${prefix}${d.durationInterval} ${d.durationUnit}${d.durationInterval > 1 ? 's' : ''}`;
+            }
+        }
+
+        spells.push({
+            name: def.name,
+            level: def.level ?? 0,
+            school: def.school ?? undefined,
+            prepared: raw.prepared ?? raw.alwaysPrepared ?? false,
+            isConcentration: def.concentration ?? false,
+            isRitual: def.ritual ?? false,
+            castingTime: def.castingTimeDescription ?? undefined,
+            range: def.range?.rangeValue != null ? `${def.range.rangeValue} ft` : def.range?.origin ?? undefined,
+            components: components || undefined,
+            duration: durationStr || undefined,
+            description: def.description ? stripHtml(def.description).slice(0, 500) : undefined,
+            damageDice: def.damage?.diceString ?? undefined,
+            saveAbility: def.saveDcStat != null ? SAVE_STAT_MAP[def.saveDcStat] : undefined,
+            alwaysPrepared: raw.alwaysPrepared ?? false,
+        });
+    }
+
+    // classSpells — primary source
+    if (data.classSpells) {
+        for (const classEntry of data.classSpells) {
+            for (const spell of classEntry.spells ?? []) {
+                addSpell(spell);
+            }
+        }
+    }
+    // race/feat/item spell sources
+    if (data.spells && typeof data.spells === 'object' && !Array.isArray(data.spells)) {
+        for (const source of ['race', 'class', 'feat', 'item']) {
+            for (const spell of data.spells[source] ?? []) {
+                addSpell(spell);
+            }
+        }
+    }
+    return spells.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+}
+
 function parseCharacterData(data) {
     const name = data.name || 'Unknown';
     const charClass = data.classes?.map(c => c.definition?.name).join(' / ') || 'Adventurer';
@@ -185,6 +254,9 @@ function parseCharacterData(data) {
         description: i.definition.description
     }));
 
+    // Parse spells from classSpells and other sources
+    const spells = parseSpellList(data);
+
     return {
         name, class: charClass, level, maxHp, currentHp, ac,
         stats: JSON.stringify(statsObj),
@@ -192,7 +264,7 @@ function parseCharacterData(data) {
         features: JSON.stringify([]),
         features_traits: JSON.stringify([]),
         inventory: JSON.stringify(inventory),
-        spells: JSON.stringify([]),
+        spells: JSON.stringify(spells),
         backstory: data.notes?.backstory || '',
         raw_dndbeyond_json: JSON.stringify(data),
         data_json: JSON.stringify(data)

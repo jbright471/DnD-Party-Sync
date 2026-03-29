@@ -69,6 +69,7 @@ function parseSessionState(raw) {
     tempHp: raw.temp_hp,
     deathSaves: JSON.parse(raw.death_saves_json || '{"successes":0,"failures":0}'),
     activeConditions: JSON.parse(raw.conditions_json || '[]'),
+    conditionDurations: JSON.parse(raw.condition_durations_json || '{}'),
     activeBuffs: JSON.parse(raw.buffs_json || '[]'),
     concentratingOn: raw.concentrating_on,
     spellSlotsUsed: JSON.parse(raw.slots_used_json || '{}'),
@@ -96,6 +97,7 @@ function saveSessionState(db, state) {
       hd_used_json = ?,
       feature_uses_json = ?,
       active_features_json = ?,
+      condition_durations_json = ?,
       updated_at = datetime('now')
     WHERE character_id = ?
   `).run(
@@ -109,6 +111,7 @@ function saveSessionState(db, state) {
     JSON.stringify(state.hitDiceUsed),
     JSON.stringify(state.featureUses),
     JSON.stringify(state.activeFeatures),
+    JSON.stringify(state.conditionDurations || {}),
     state.characterId,
   );
 
@@ -269,15 +272,20 @@ function dropConcentrationEvent(db, characterId) {
   return { success: true, droppedSpell: dropped, droppedBuffIds: concChange.droppedBuffIds, logMessage: `${char.name} dropped concentration on ${dropped}.` };
 }
 
-function applyConditionEvent(db, characterId, condition) {
+function applyConditionEvent(db, characterId, condition, durationRounds) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
   if (!char || !state) return { success: false, error: 'Character not found' };
   const result = applyCondition(state.activeConditions, condition);
   if (result.alreadyPresent) return { success: true, alreadyPresent: true, logMessage: `${char.name} already has ${condition}.` };
   state.activeConditions = result.newConditions;
+  // Track duration if provided (null/undefined = permanent)
+  if (durationRounds != null && durationRounds > 0) {
+    state.conditionDurations[condition.toLowerCase().trim()] = durationRounds;
+  }
   saveSessionState(db, state);
-  return { success: true, newConditions: state.activeConditions, logMessage: `${char.name} is now ${condition}.` };
+  const durationStr = durationRounds > 0 ? ` (${durationRounds} rds)` : '';
+  return { success: true, newConditions: state.activeConditions, logMessage: `${char.name} is now ${condition}${durationStr}.` };
 }
 
 function removeConditionEvent(db, characterId, condition) {
@@ -286,8 +294,44 @@ function removeConditionEvent(db, characterId, condition) {
   if (!char || !state) return { success: false, error: 'Character not found' };
   const result = removeCondition(state.activeConditions, condition);
   state.activeConditions = result.newConditions;
+  // Clean up duration tracking
+  delete state.conditionDurations[condition.toLowerCase().trim()];
   saveSessionState(db, state);
   return { success: true, newConditions: state.activeConditions, logMessage: result.wasPresent ? `${char.name} is no longer ${condition}.` : `${char.name} did not have ${condition}.` };
+}
+
+/**
+ * Tick all conditions with durations for a character.
+ * Decrements each tracked duration by 1. Removes any that hit 0.
+ * Returns { expired: string[], remaining: { name: string, duration: number }[] }
+ */
+function tickConditionsEvent(db, characterId) {
+  const char = getCharacterData(db, characterId);
+  const state = getSessionState(db, characterId);
+  if (!char || !state) return { success: false, expired: [], remaining: [] };
+
+  const expired = [];
+  const remaining = [];
+  const durations = { ...state.conditionDurations };
+
+  for (const [condName, dur] of Object.entries(durations)) {
+    const newDur = dur - 1;
+    if (newDur <= 0) {
+      // Remove the expired condition
+      const result = removeCondition(state.activeConditions, condName);
+      state.activeConditions = result.newConditions;
+      delete durations[condName];
+      if (result.wasPresent) expired.push(condName);
+    } else {
+      durations[condName] = newDur;
+      remaining.push({ name: condName, duration: newDur });
+    }
+  }
+
+  state.conditionDurations = durations;
+  saveSessionState(db, state);
+
+  return { success: true, expired, remaining, characterName: char.name };
 }
 
 function applyBuffEvent(db, characterId, buffData) {
@@ -334,6 +378,56 @@ function useSpellSlotEvent(db, characterId, slotLevel) {
   return { success: true, slotsUsed: result.newSlotsUsed, logMessage: `${char.name} used a level ${slotLevel} spell slot.` };
 }
 
+/**
+ * Spend one hit die during a short rest: roll the die, add CON mod, heal that amount.
+ * Returns the roll result and new HP.
+ */
+function spendHitDieEvent(db, characterId, dieType) {
+  const char = getCharacterData(db, characterId);
+  const state = getSessionState(db, characterId);
+  if (!char || !state) return { success: false, error: 'Character not found' };
+
+  const totalDice = (char.hitDice || {})[dieType] || 0;
+  const usedDice = (state.hitDiceUsed || {})[dieType] || 0;
+  const remaining = totalDice - usedDice;
+
+  if (remaining <= 0) return { success: false, error: `No ${dieType} hit dice remaining` };
+
+  // Roll the hit die
+  const sides = parseInt(dieType.replace('d', ''));
+  const roll = Math.floor(Math.random() * sides) + 1;
+
+  // Add CON modifier
+  const conScore = (char.abilityScores || {}).CON || 10;
+  const conMod = Math.floor((conScore - 10) / 2);
+  const healAmount = Math.max(roll + conMod, 1); // minimum 1 HP
+
+  // Apply healing (capped at max HP)
+  const healResult = resolveHeal(
+    { currentHp: state.currentHp, tempHp: state.tempHp, maxHp: char.baseMaxHp },
+    healAmount
+  );
+  state.currentHp = healResult.newCurrentHp;
+
+  // Mark the die as used
+  state.hitDiceUsed = { ...state.hitDiceUsed, [dieType]: usedDice + 1 };
+
+  saveSessionState(db, state);
+
+  return {
+    success: true,
+    dieType,
+    roll,
+    conMod,
+    healAmount,
+    healed: healResult.healed,
+    newHp: state.currentHp,
+    maxHp: char.baseMaxHp,
+    remaining: remaining - 1,
+    logMessage: `${char.name} spent a ${dieType} hit die: rolled ${roll} + ${conMod} CON = ${healAmount} HP healed (${state.currentHp}/${char.baseMaxHp})`,
+  };
+}
+
 function shortRestEvent(db, characterId) {
   const char = getCharacterData(db, characterId);
   const state = getSessionState(db, characterId);
@@ -351,7 +445,22 @@ function longRestEvent(db, characterId) {
   state.tempHp = 0;
   state.spellSlotsUsed = restoreAllSpellSlots();
   state.featureUses = longRestFeatures();
-  state.hitDiceUsed = {};
+
+  // 5e rule: recover up to half your total hit dice (minimum 1) on a long rest
+  const totalHitDice = char.hitDice || {};
+  const totalCount = Object.values(totalHitDice).reduce((s, n) => s + n, 0);
+  const recoverable = Math.max(Math.floor(totalCount / 2), 1);
+  let toRecover = recoverable;
+  const newHdUsed = { ...state.hitDiceUsed };
+  for (const [dieType, used] of Object.entries(newHdUsed)) {
+    if (toRecover <= 0) break;
+    const restore = Math.min(used, toRecover);
+    newHdUsed[dieType] = used - restore;
+    toRecover -= restore;
+    if (newHdUsed[dieType] <= 0) delete newHdUsed[dieType];
+  }
+  state.hitDiceUsed = newHdUsed;
+
   state.deathSaves = { successes: 0, failures: 0 };
   saveSessionState(db, state);
   return { success: true, newHp: state.currentHp, logMessage: `${char.name} completed a long rest.` };
@@ -377,6 +486,7 @@ function getResolvedCharacterState(db, characterId) {
     abilityScores: finalScores,
     skills: char.skills,
     conditions: state.activeConditions,
+    conditionDurations: state.conditionDurations || {},
     buffs: state.activeBuffs,
     concentratingOn: state.concentratingOn,
     spellSlotsUsed: state.spellSlotsUsed,
@@ -392,12 +502,14 @@ function getResolvedCharacterState(db, characterId) {
     features: char.features,
     backstory: char.backstory,
     raw_dndbeyond_json: char.raw_dndbeyond_json,
+    hitDice: char.hitDice || {},
+    hitDiceUsed: state.hitDiceUsed || {},
   };
 }
 
 module.exports = {
   getSessionState, saveSessionState, getCharacterData, getResolvedCharacterState,
   applyDamageEvent, applyHealEvent, setTempHpEvent, castConcentrationSpellEvent,
-  dropConcentrationEvent, applyConditionEvent, removeConditionEvent, useSpellSlotEvent,
-  shortRestEvent, longRestEvent, applyBuffEvent, removeBuffEvent
+  dropConcentrationEvent, applyConditionEvent, removeConditionEvent, tickConditionsEvent,
+  useSpellSlotEvent, spendHitDieEvent, shortRestEvent, longRestEvent, applyBuffEvent, removeBuffEvent
 };

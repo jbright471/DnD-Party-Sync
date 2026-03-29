@@ -1,4 +1,4 @@
-import { Home, UserPlus, Users, Shield, ScrollText, Eye, ClipboardList, BookOpen, Swords, Map, Download, Package } from 'lucide-react';
+import { Home, UserPlus, Users, Shield, ScrollText, Eye, ClipboardList, BookOpen, Swords, Map, Download, Package, HelpCircle } from 'lucide-react';
 import { NavLink } from './NavLink';
 import { useLocation } from 'react-router-dom';
 import {
@@ -21,6 +21,7 @@ const navItems = [
   { title: 'Equipment', url: '/equipment', icon: Package },
   { title: 'Compendium', url: '/compendium', icon: ScrollText },
   { title: 'World Map', url: '/worldmap', icon: Map },
+  { title: 'Guide', url: '/guide', icon: HelpCircle },
 ];
 
 const dmItems = [

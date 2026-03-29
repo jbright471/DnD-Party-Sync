@@ -83,6 +83,29 @@ router.post('/', async (req, res) => {
     }
 });
 
+// PUT /api/homebrew/:id — update an existing entity
+router.put('/:id', (req, res) => {
+    const { name, description, stats_json } = req.body;
+    try {
+        const entity = db.prepare('SELECT * FROM homebrew_entities WHERE id = ?').get(req.params.id);
+        if (!entity) return res.status(404).json({ error: 'Entity not found' });
+
+        db.prepare(
+            'UPDATE homebrew_entities SET name = ?, description = ?, stats_json = ? WHERE id = ?'
+        ).run(
+            name ?? entity.name,
+            description ?? entity.description,
+            stats_json ? JSON.stringify(stats_json) : entity.stats_json,
+            req.params.id
+        );
+
+        const updated = db.prepare('SELECT * FROM homebrew_entities WHERE id = ?').get(req.params.id);
+        res.json({ ...updated, stats_json: JSON.parse(updated.stats_json) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // DELETE /api/homebrew/:id
 router.delete('/:id', (req, res) => {
     try {

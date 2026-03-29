@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Character, DND_CONDITIONS, DndCondition } from '../types/character';
 import { backend } from '../integrations/backend';
 import { cn } from '../lib/utils';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Clock } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -187,16 +188,27 @@ interface ConditionBadgesProps {
  * The + button opens a popover showing all 15 conditions as toggle tiles.
  */
 export function ConditionBadges({ character }: ConditionBadgesProps) {
+  const [durationInput, setDurationInput] = useState<Record<string, string>>({});
+
   // Safely cast — only show known conditions
   const active = character.conditions.filter(
     (c): c is DndCondition => DND_CONDITIONS.includes(c as DndCondition),
   );
 
+  /** Get remaining duration for a condition (undefined = permanent) */
+  const getDuration = (cond: string): number | undefined => {
+    const key = cond.toLowerCase();
+    return character.conditionDurations?.[key];
+  };
+
   const toggle = (cond: DndCondition) => {
     if (active.includes(cond)) {
       backend.removeCondition(character.id, cond);
     } else {
-      backend.applyCondition(character.id, cond);
+      const durStr = durationInput[cond];
+      const dur = durStr ? parseInt(durStr) : undefined;
+      backend.applyCondition(character.id, cond, dur && dur > 0 ? dur : undefined);
+      setDurationInput(prev => ({ ...prev, [cond]: '' }));
     }
   };
 
@@ -226,8 +238,15 @@ export function ConditionBadges({ character }: ConditionBadgesProps) {
                   <span className="font-mono text-[10px] leading-none opacity-75" aria-hidden>
                     {meta.icon}
                   </span>
-                  {/* name */}
-                  <span className="leading-none">{cond}</span>
+                  {/* name + duration */}
+                  <span className="leading-none">
+                    {cond}
+                    {getDuration(cond) != null && (
+                      <span className="ml-0.5 opacity-70 text-[9px] tabular-nums">
+                        ({getDuration(cond)} rd{getDuration(cond) !== 1 ? 's' : ''})
+                      </span>
+                    )}
+                  </span>
                   {/* remove × — only visible on hover */}
                   <button
                     onClick={() => backend.removeCondition(character.id, cond)}
@@ -259,6 +278,13 @@ export function ConditionBadges({ character }: ConditionBadgesProps) {
                     {cond}
                   </span>
                 </div>
+                {/* duration indicator */}
+                {getDuration(cond) != null && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary/30 text-[10px] text-muted-foreground border-b border-border/30">
+                    <Clock className="h-3 w-3 opacity-50" />
+                    <span className="tabular-nums font-semibold">{getDuration(cond)} round{getDuration(cond) !== 1 ? 's' : ''} remaining</span>
+                  </div>
+                )}
                 {/* rules list */}
                 <ul className="px-3 py-2.5 space-y-1.5">
                   {meta.rules.map((rule, i) => (
@@ -321,27 +347,45 @@ export function ConditionBadges({ character }: ConditionBadgesProps) {
               {DND_CONDITIONS.map(cond => {
                 const meta = CONDITIONS[cond];
                 const isActive = active.includes(cond);
+                const dur = getDuration(cond);
 
                 return (
-                  <button
-                    key={cond}
-                    onClick={() => toggle(cond)}
-                    aria-pressed={isActive}
-                    className={cn(
-                      'flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-md border',
-                      'text-[10px] font-display tracking-wide text-center leading-tight',
-                      'transition-all duration-150 cursor-pointer',
-                      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
-                      isActive
-                        ? cn(MANAGE_ACTIVE[meta.severity], 'font-bold')
-                        : 'border-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary/50',
+                  <div key={cond} className="flex flex-col">
+                    <button
+                      onClick={() => toggle(cond)}
+                      aria-pressed={isActive}
+                      className={cn(
+                        'flex flex-col items-center gap-0.5 px-1.5 py-2 rounded-md border',
+                        'text-[10px] font-display tracking-wide text-center leading-tight',
+                        'transition-all duration-150 cursor-pointer',
+                        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary',
+                        isActive
+                          ? cn(MANAGE_ACTIVE[meta.severity], 'font-bold')
+                          : 'border-transparent text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary/50',
+                      )}
+                    >
+                      <span className="font-mono text-[12px] leading-none" aria-hidden>
+                        {meta.icon}
+                      </span>
+                      <span>{cond}</span>
+                      {isActive && dur != null && (
+                        <span className="text-[8px] opacity-60 tabular-nums">{dur} rd{dur !== 1 ? 's' : ''}</span>
+                      )}
+                    </button>
+                    {/* Duration input — shown when condition is inactive */}
+                    {!isActive && (
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="rds"
+                        value={durationInput[cond] || ''}
+                        onChange={e => setDurationInput(prev => ({ ...prev, [cond]: e.target.value }))}
+                        onClick={e => e.stopPropagation()}
+                        className="mt-0.5 w-full h-5 text-[9px] text-center bg-secondary/30 border border-border/30 rounded focus:outline-none focus:ring-1 focus:ring-primary/30 placeholder:text-muted-foreground/30"
+                        title="Duration in rounds (empty = permanent)"
+                      />
                     )}
-                  >
-                    <span className="font-mono text-[12px] leading-none" aria-hidden>
-                      {meta.icon}
-                    </span>
-                    <span>{cond}</span>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -349,7 +393,7 @@ export function ConditionBadges({ character }: ConditionBadgesProps) {
             {/* footer hint */}
             <div className="px-3 py-2 border-t border-border/30">
               <p className="text-[9px] text-muted-foreground/30 font-display tracking-wide text-center">
-                CLICK TO TOGGLE · HOVER PILL FOR RULES
+                CLICK TO TOGGLE · SET ROUNDS BEFORE APPLYING · HOVER PILL FOR RULES
               </p>
             </div>
           </PopoverContent>

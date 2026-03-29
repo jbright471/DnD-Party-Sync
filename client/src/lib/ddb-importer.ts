@@ -1,4 +1,4 @@
-import { Character, DndClass, AbilityScores, Equipment, StatModifier, SpellSlots } from '../types/character';
+import { Character, DndClass, AbilityScores, Equipment, StatModifier, SpellSlots, Spell } from '../types/character';
 
 // D&D Beyond JSON structure (subset of fields we care about)
 interface DDBCharacter {
@@ -49,6 +49,34 @@ interface DDBCharacter {
     used?: number;
     available?: number;
   }>;
+  classSpells?: Array<{
+    spells?: Array<{
+      definition?: {
+        name?: string;
+        level?: number;
+        school?: string;
+        concentration?: boolean;
+        ritual?: boolean;
+        castingTimeDescription?: string;
+        range?: { origin?: string; rangeValue?: number | null; aoeType?: string; aoeValue?: number | null };
+        components?: number[];
+        componentsDescription?: string;
+        duration?: { durationInterval?: number; durationType?: string; durationUnit?: string };
+        description?: string;
+        damage?: { diceString?: string };
+        saveDcStat?: number | null;
+      };
+      prepared?: boolean;
+      alwaysPrepared?: boolean;
+      usesSpellSlot?: boolean;
+    }>;
+  }>;
+  spells?: {
+    race?: Array<{ definition?: any; prepared?: boolean; alwaysPrepared?: boolean }>;
+    class?: Array<{ definition?: any; prepared?: boolean; alwaysPrepared?: boolean }>;
+    feat?: Array<{ definition?: any; prepared?: boolean; alwaysPrepared?: boolean }>;
+    item?: Array<{ definition?: any; prepared?: boolean; alwaysPrepared?: boolean }>;
+  };
   preferences?: {
     useHomebrewContent?: boolean;
   };
@@ -199,6 +227,81 @@ function parseSpellSlots(ddb: DDBCharacter): SpellSlots {
   return slots;
 }
 
+const COMPONENT_MAP: Record<number, string> = { 1: 'V', 2: 'S', 3: 'M' };
+const SAVE_STAT_MAP: Record<number, string> = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
+
+function parseSpells(ddb: DDBCharacter): Spell[] {
+  const seen = new Set<string>();
+  const spells: Spell[] = [];
+
+  function addSpell(raw: any) {
+    const def = raw?.definition;
+    if (!def?.name) return;
+    const key = def.name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const components = (def.components || [])
+      .map((c: number) => COMPONENT_MAP[c])
+      .filter(Boolean)
+      .join(', ');
+
+    let durationStr = '';
+    if (def.duration) {
+      const d = def.duration;
+      if (d.durationType === 'Instantaneous' || d.durationType === 'Special') {
+        durationStr = d.durationType;
+      } else if (d.durationInterval && d.durationUnit) {
+        const prefix = def.concentration ? 'Concentration, up to ' : '';
+        durationStr = `${prefix}${d.durationInterval} ${d.durationUnit}${d.durationInterval > 1 ? 's' : ''}`;
+      }
+    }
+
+    spells.push({
+      name: def.name,
+      level: def.level ?? 0,
+      school: def.school ?? undefined,
+      prepared: raw.prepared ?? raw.alwaysPrepared ?? false,
+      isConcentration: def.concentration ?? false,
+      isRitual: def.ritual ?? false,
+      castingTime: def.castingTimeDescription ?? undefined,
+      range: def.range?.rangeValue != null
+        ? `${def.range.rangeValue} ft`
+        : def.range?.origin ?? undefined,
+      components: components || undefined,
+      duration: durationStr || undefined,
+      description: def.description ? stripHtml(def.description) : undefined,
+      damageDice: def.damage?.diceString ?? undefined,
+      saveAbility: def.saveDcStat != null ? (SAVE_STAT_MAP[def.saveDcStat] as any) : undefined,
+      alwaysPrepared: raw.alwaysPrepared ?? false,
+    });
+  }
+
+  // classSpells is the primary source in DDB character exports
+  if (ddb.classSpells) {
+    for (const classEntry of ddb.classSpells) {
+      for (const spell of classEntry.spells ?? []) {
+        addSpell(spell);
+      }
+    }
+  }
+
+  // Also check race/feat/item spell sources
+  if (ddb.spells && typeof ddb.spells === 'object' && !Array.isArray(ddb.spells)) {
+    for (const source of ['race', 'class', 'feat', 'item'] as const) {
+      for (const spell of (ddb.spells as any)[source] ?? []) {
+        addSpell(spell);
+      }
+    }
+  }
+
+  return spells.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim();
+}
+
 function calculateTotalLevel(ddb: DDBCharacter): number {
   if (!ddb.classes || ddb.classes.length === 0) return 1;
   return ddb.classes.reduce((sum, c) => sum + (c.level ?? 0), 0);
@@ -236,6 +339,7 @@ export function parseDDBCharacter(json: unknown): Character {
 
   const equipment = parseEquipment(ddb);
   const spellSlots = parseSpellSlots(ddb);
+  const spells = parseSpells(ddb);
 
   // Calculate AC from modifiers
   let ac = 10; // base
@@ -274,7 +378,7 @@ export function parseDDBCharacter(json: unknown): Character {
     conditions: [],
     equipment,
     spellSlots,
-    spells: [],
+    spells,
     abilities: [],
     proficiencyBonus: Math.ceil(level / 4) + 1,
     speed: 30, // Could be parsed from modifiers but varies by race

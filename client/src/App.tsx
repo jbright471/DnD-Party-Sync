@@ -22,6 +22,7 @@ import DmDashboard from "./pages/DmDashboard";
 import PartyNotesPage from "./pages/PartyNotesPage";
 import SessionArchive from "./pages/SessionArchive";
 import WorldMap from "./pages/WorldMap";
+import AppGuidebook from "./pages/AppGuidebook";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -118,6 +119,7 @@ const App = () => (
               <Route path="/notes" element={<PartyNotesPage />} />
               <Route path="/archive" element={<SessionArchive />} />
               <Route path="/worldmap" element={<WorldMap />} />
+              <Route path="/guide" element={<AppGuidebook />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Layout>

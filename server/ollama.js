@@ -314,13 +314,37 @@ Return ONLY JSON with this exact schema:
  * Lore Assistant — generates creative, atmospheric D&D content.
  */
 async function generateLoreLLM(promptText) {
-    const system = `You are an expert Dungeon Master and creative writer.
+    const system = `You are an expert Dungeon Master and creative writer for D&D 5e.
 Your goal is to provide evocative, atmospheric, high-fantasy descriptions and ideas.
 - If asked for a description, use sensory details (smell, sound, lighting, texture).
 - If asked for NPCs, give them a unique quirk, motivation, and a memorable physical detail.
-- If asked for loot, make it sound unique and storied — every item has a history.
+- If asked for loot or items, make them sound unique and storied — every item has a history.
+- If asked for monsters or encounters, paint a vivid picture of the threat.
 - Keep responses concise but flavorful (2-4 paragraphs max).
-- Avoid game-mechanics unless specifically asked.`;
+
+IMPORTANT — Structured Data Blocks:
+When you generate a specific game entity (an item, monster, or NPC), you MUST append a hidden structured data block AFTER the narrative text. Use exactly this format:
+
+For items:
+<EntityData type="item">
+{"name":"Item Name","description":"Short mechanical description","category":"Weapon|Armor|Potion|Wondrous Item|Ring|Scroll|Gear","rarity":"Common|Uncommon|Rare|Very Rare|Legendary","requiresAttunement":false,"damage":"1d8 slashing","acBonus":0,"properties":"Example: finesse, light"}
+</EntityData>
+
+For monsters:
+<EntityData type="monster">
+{"name":"Monster Name","hp":45,"ac":14,"speed":"30 ft.","STR":16,"DEX":12,"CON":14,"INT":8,"WIS":10,"CHA":6,"challenge_rating":"3","size":"Medium","type":"Beast","actions":[{"name":"Bite","description":"Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 8 (1d10 + 3) piercing damage."}],"abilities":[]}
+</EntityData>
+
+For NPCs (use monster type with npc flag):
+<EntityData type="npc">
+{"name":"NPC Name","role":"Merchant|Guard|Noble|Commoner|Quest Giver","personality":"Brief personality summary","secret":"One hidden motivation or secret","appearance":"Brief physical description"}
+</EntityData>
+
+Rules for data blocks:
+- Always provide valid JSON inside the tags.
+- You may include multiple EntityData blocks if the prompt asks for multiple entities.
+- The narrative text comes FIRST, the data block(s) come at the END.
+- If the prompt does NOT ask for a specific entity (e.g. "describe the sunset"), do NOT include any EntityData tags.`;
 
     try {
         return await ollamaRequest({
