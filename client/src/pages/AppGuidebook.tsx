@@ -6,13 +6,14 @@
  */
 
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { cn } from '../lib/utils';
 import {
   BookOpen, Search, Scroll, Swords, Eye, Shield, Heart, Sparkles,
   Dices, Moon, Sun, Gem, Users, Zap, Map, HelpCircle, ChevronRight,
-  Mic, Globe, Package, ClipboardList, Compass,
+  Mic, Globe, Package, ClipboardList, Compass, ArrowLeft,
 } from 'lucide-react';
 
 // ── Guide content data ───────────────────────────────────────────────────
@@ -1018,8 +1019,17 @@ export default function AppGuidebook() {
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] -m-6 overflow-hidden">
-      {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="w-72 shrink-0 border-r border-border/40 bg-card/40 flex flex-col">
+      {/* ── Guide Sidebar (Arcane Codex) ─────────────────────── */}
+      <aside className="w-72 shrink-0 border-r border-border/40 bg-card z-10 flex flex-col">
+        {/* Back to App */}
+        <Link
+          to="/"
+          className="flex items-center gap-2 px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/40 border-b border-border/20 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span className="font-display tracking-wide text-xs uppercase">Back to Dashboard</span>
+        </Link>
+
         {/* Header */}
         <div className="px-4 py-4 border-b border-border/30">
           <div className="flex items-center gap-2 mb-3">
@@ -1098,6 +1108,10 @@ export default function AppGuidebook() {
         <div className="max-w-3xl mx-auto px-8 py-8">
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 mb-6 text-[10px] text-muted-foreground/40 font-display tracking-wider uppercase">
+            <Link to="/" className="hover:text-primary transition-colors">Arcane Ally</Link>
+            <ChevronRight className="h-3 w-3" />
+            <span>Guide</span>
+            <ChevronRight className="h-3 w-3" />
             <span>{CATEGORIES.find(c => c.key === activeSection.category)?.label}</span>
             <ChevronRight className="h-3 w-3" />
             <span className="text-muted-foreground/60">{activeSection.title}</span>

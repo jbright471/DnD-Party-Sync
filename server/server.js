@@ -17,7 +17,7 @@ const worldRouter = require('./routes/world');
 const notesRouter = require('./routes/notes');
 const homebrewRouter = require('./routes/homebrew');
 const db = require('./db');
-const { askRulesAssistant, resolveActionLLM, generateSessionRecap, generateLoreLLM } = require('./ollama');
+const { askRulesAssistant, resolveActionLLM, generateSessionRecap, generateCombatReport, generateLoreLLM } = require('./ollama');
 const { backupDatabase } = require('./backup');
 const cron = require('node-cron');
 const automationRouter = require('./routes/automation');
@@ -219,6 +219,22 @@ app.get('/api/recaps', (req, res) => {
     try {
         const recaps = db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all();
         res.json(recaps);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/recaps/combat', (req, res) => {
+    try {
+        const { recapText, rawLog, sessionDate } = req.body;
+        if (!recapText) return res.status(400).json({ error: 'recapText required' });
+        const result = db.prepare(
+            'INSERT INTO session_recaps (recap_text, raw_log, session_date) VALUES (?, ?, ?)'
+        ).run(recapText, rawLog || '[]', sessionDate || null);
+        const recap = db.prepare('SELECT * FROM session_recaps WHERE id = ?').get(result.lastInsertRowid);
+        // Broadcast to all clients so SessionArchive updates live
+        io.emit('recaps_updated', db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all());
+        res.status(201).json(recap);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1222,12 +1238,78 @@ io.on('connection', (socket) => {
         broadcastInitiative();
     });
 
-    socket.on('end_encounter', () => {
-        endEncounter();
-        currentCombatRound = 0;
-        currentTurnIndex = 0;
-        logAction('DM', '🏁 Combat has ended.');
-        broadcastInitiative();
+    socket.on('end_encounter', async (callback) => {
+        try {
+            // Snapshot timeline + party state BEFORE clearing
+            const timeline = getCombatTimeline(db);
+            const trackerState = getTrackerState();
+            const totalRounds = currentCombatRound;
+
+            // Compress timeline into token-efficient format for LLM
+            const events = timeline
+                .filter(e => !e.is_reversed)
+                .map(e => {
+                    let detail = e.description || '';
+                    if (!detail) {
+                        try {
+                            const p = JSON.parse(e.payload_json || '{}');
+                            if (e.event_type === 'damage') detail = `${p.value || '?'} ${p.damageType || ''} damage`;
+                            else if (e.event_type === 'heal') detail = `+${p.value || '?'} HP`;
+                            else if (e.event_type === 'condition_applied') detail = `applied ${p.condition}`;
+                            else if (e.event_type === 'condition_removed') detail = `removed ${p.condition}`;
+                            else if (e.event_type === 'concentration_broken') detail = `lost concentration on ${p.spellName}`;
+                            else if (e.event_type === 'rest') detail = `${p.restType} rest`;
+                            else detail = e.event_type;
+                        } catch { detail = e.event_type; }
+                    }
+                    return {
+                        round: e.session_round,
+                        actor: e.actor,
+                        action: e.event_type,
+                        target: e.target_name || '',
+                        detail,
+                    };
+                });
+
+            // Build survivor snapshot from tracker (PCs + alive monsters)
+            const characters = getAllCharacters();
+            const survivors = trackerState
+                .filter(e => e.current_hp > 0)
+                .map(e => {
+                    const char = e.character_id ? characters.find(c => c.id === e.character_id) : null;
+                    return {
+                        name: e.entity_name,
+                        type: e.entity_type,
+                        hp: e.current_hp,
+                        maxHp: e.max_hp,
+                        conditions: e.conditions || [],
+                    };
+                });
+
+            // Clear combat state
+            endEncounter();
+            currentCombatRound = 0;
+            currentTurnIndex = 0;
+            logAction('DM', '🏁 Combat has ended.');
+            broadcastInitiative();
+
+            // Generate AI report if there were meaningful events
+            if (events.length >= 2) {
+                const reportText = await generateCombatReport({ events, survivors, totalRounds });
+                if (reportText) {
+                    callback?.({ success: true, report: reportText, events, survivors, totalRounds });
+                    return;
+                }
+            }
+
+            // No events or LLM failed — still succeed but with no report
+            callback?.({ success: true, report: null, events, survivors, totalRounds });
+        } catch (err) {
+            console.error('[Combat] Error ending encounter:', err.message);
+            // Still clear combat even if report fails
+            try { endEncounter(); currentCombatRound = 0; currentTurnIndex = 0; broadcastInitiative(); } catch (_) {}
+            callback?.({ success: false, error: err.message });
+        }
     });
 
     // ── Party Effect Engine ──────────────────────────────────────────────────

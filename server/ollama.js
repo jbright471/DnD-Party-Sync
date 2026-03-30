@@ -558,6 +558,60 @@ ${pdfText.substring(0, 18000)}
     }
 }
 
+/**
+ * Combat Report Generator — creates a structured narrative from the effect timeline.
+ * Called when the DM clicks "End Combat" and the combat log has events.
+ *
+ * @param {object} reportData - Compressed combat data
+ * @param {Array}  reportData.events - Array of {round, actor, action, target, detail}
+ * @param {Array}  reportData.survivors - Array of {name, hp, maxHp, conditions}
+ * @param {number} reportData.totalRounds - Number of combat rounds
+ */
+async function generateCombatReport(reportData) {
+    const system = `You are the Chronicle Keeper, a master scribe who records battles for a D&D 5e campaign journal. Your task is to consume a structured combat log and produce a vivid Markdown summary.
+
+Output EXACTLY this three-section structure (use these exact headings):
+
+## The Narrative
+Write 2 short paragraphs summarizing the battle in vivid, atmospheric prose. Mention character names and key turning points. Use past tense, third person. Be dramatic but concise.
+
+## The Stats
+Provide bullet points for these battlefield honors:
+- **MVP** — who dealt the most total damage, and how much
+- **The Anvil** — who absorbed the most damage (took the most hits)
+- **Clutch Moment** — the single most impactful event (a critical hit, a massive heal, a key condition, a last-stand save). Quote the specific roll or amount if available.
+
+If the data is insufficient for any category, write "No clear standout" instead of guessing.
+
+## The Aftermath
+A bullet list of any characters who ended combat at or below 50% HP, or with active conditions. Format each as:
+- **Name** — HP current/max, conditions: [list or "none"]
+
+If everyone is healthy and condition-free, write: "The party emerges unscathed."
+
+Rules:
+- Do NOT invent events that aren't in the log.
+- Do NOT include any text outside these three sections.
+- Keep the entire response under 400 words.`;
+
+    const prompt = `Here is the combat data (${reportData.totalRounds} rounds):
+
+COMBAT LOG:
+${JSON.stringify(reportData.events)}
+
+SURVIVORS:
+${JSON.stringify(reportData.survivors)}
+
+Write the combat report now:`;
+
+    try {
+        return await ollamaRequest({ prompt, system });
+    } catch (e) {
+        console.error('[Ollama] Combat report error:', e.message);
+        return null;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -565,6 +619,7 @@ module.exports = {
     askRulesAssistant,
     resolveActionLLM,
     generateSessionRecap,
+    generateCombatReport,
     generateHomebrewStats,
     parseItemDescriptionLLM,
     parseManualItemLLM,

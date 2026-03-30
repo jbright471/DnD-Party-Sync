@@ -49,7 +49,7 @@ interface StatChecksProps {
  * proficiency dot is reserved for a future enhancement.
  */
 export function StatChecks({ character }: StatChecksProps) {
-  const { abilityScores, name } = character;
+  const { abilityScores, conditions, name } = character;
 
   return (
     <div className="space-y-4">
@@ -71,6 +71,8 @@ export function StatChecks({ character }: StatChecksProps) {
               rollType="Saving Throw"
               characterName={name}
               variant="row"
+              conditions={conditions}
+              ability={ability}
             />
           ))}
         </CardContent>
@@ -94,6 +96,8 @@ export function StatChecks({ character }: StatChecksProps) {
               rollType="Skill Check"
               characterName={name}
               variant="row"
+              conditions={conditions}
+              ability={ability}
             />
           ))}
         </CardContent>

@@ -11,8 +11,8 @@ export function Layout({ children }: { children: ReactNode }) {
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
         <AppSidebar />
-        <div className="flex-1 flex flex-col min-h-screen">
-          <header className="h-14 flex items-center border-b border-border px-4 bg-card/60 backdrop-blur-sm sticky top-0 z-20 shadow-sm shadow-black/30">
+        <div className="flex-1 flex flex-col min-h-screen min-w-0">
+          <header className="h-14 shrink-0 flex items-center border-b border-border px-4 bg-card/60 backdrop-blur-sm sticky top-0 z-20 shadow-sm shadow-black/30">
             <SidebarTrigger className="mr-4" />
             <div className="flex items-center gap-2">
               <Swords className="h-5 w-5 text-primary animate-pulse-glow" />
@@ -36,7 +36,7 @@ export function Layout({ children }: { children: ReactNode }) {
             {/* Decorative gold rule at the bottom of the header */}
             <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
           </header>
-          <main className="flex-1 p-6 overflow-auto">
+          <main className="flex-1 p-6 overflow-y-auto overflow-x-hidden">
             {children}
           </main>
         </div>

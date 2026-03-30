@@ -7,9 +7,11 @@ import { Badge } from './ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import {
   Swords, SkipForward, SkipBack, StopCircle, Shield, Skull,
-  Plus, ChevronUp, ChevronDown, Eye, EyeOff, Zap,
+  Plus, ChevronUp, ChevronDown, Eye, EyeOff, Zap, Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import socket from '../socket';
+import { CombatReportModal } from './CombatReportModal';
 
 // ─── Sorting Utility ─────────────────────────────────────────────────────────
 
@@ -119,6 +121,14 @@ export function InitiativeTracker() {
   const members = state.characters || [];
   const roundNumber = state.roundNumber || 1;
   const [showSpawner, setShowSpawner] = useState(false);
+  const [isEnding, setIsEnding] = useState(false);
+  const [reportData, setReportData] = useState<{
+    report: string | null;
+    events: Array<{ round: number; actor: string; action: string; target: string; detail: string }>;
+    survivors: Array<{ name: string; type: string; hp: number; maxHp: number; conditions: string[] }>;
+    totalRounds: number;
+  } | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const activeRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to active combatant when turn changes
@@ -133,7 +143,25 @@ export function InitiativeTracker() {
   const activeIndex = tracker.findIndex(e => e.is_active);
 
   const handleStartCombat = () => socket.emit('start_encounter', { encounterId: 1 });
-  const handleEndCombat = () => socket.emit('end_encounter');
+  const handleEndCombat = () => {
+    if (!confirm('End combat? An AI battle report will be generated.')) return;
+    setIsEnding(true);
+    socket.emit('end_encounter', (res: { success: boolean; error?: string; report?: string | null; events?: any[]; survivors?: any[]; totalRounds?: number }) => {
+      setIsEnding(false);
+      if (res.success) {
+        setReportData({
+          report: res.report ?? null,
+          events: res.events ?? [],
+          survivors: res.survivors ?? [],
+          totalRounds: res.totalRounds ?? 0,
+        });
+        setShowReport(true);
+        toast.success('Combat ended — report ready!');
+      } else {
+        toast.error('Error ending combat: ' + (res.error || 'Unknown'));
+      }
+    });
+  };
   const handleNextTurn = () => socket.emit('next_turn');
   const handlePrevTurn = () => socket.emit('prev_turn');
   const handleSetInitiative = (trackerId: number, val: number) => socket.emit('set_initiative', { trackerId, initiative: val });
@@ -150,6 +178,7 @@ export function InitiativeTracker() {
   // ── Empty State ──
   if (!isCombatActive) {
     return (
+      <>
       <Card className="border-primary/20 bg-secondary/5">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -173,6 +202,12 @@ export function InitiativeTracker() {
           {showSpawner && <InlineSpawner onSpawn={handleSpawn} />}
         </CardContent>
       </Card>
+      <CombatReportModal
+        open={showReport}
+        onClose={() => setShowReport(false)}
+        data={reportData}
+      />
+      </>
     );
   }
 
@@ -203,9 +238,13 @@ export function InitiativeTracker() {
               variant="destructive"
               size="sm"
               onClick={handleEndCombat}
+              disabled={isEnding}
               className="h-7 text-[10px] uppercase tracking-wider"
             >
-              <StopCircle className="h-3 w-3 mr-1" /> End
+              {isEnding
+                ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Ending...</>
+                : <><StopCircle className="h-3 w-3 mr-1" /> End</>
+              }
             </Button>
           </div>
         </div>
@@ -415,6 +454,13 @@ export function InitiativeTracker() {
             {activeIndex >= 0 && <span className="ml-1">({activeIndex + 1}/{tracker.length})</span>}
           </div>
         )}
+
+        {/* Combat Report Modal */}
+        <CombatReportModal
+          open={showReport}
+          onClose={() => setShowReport(false)}
+          data={reportData}
+        />
       </CardContent>
     </Card>
   );

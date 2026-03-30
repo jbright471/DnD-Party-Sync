@@ -2,47 +2,76 @@ import { rollDice, WeaponAttack } from '../types/character';
 import socket from '../socket';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
-import { Crosshair, Dices, Swords, Target } from 'lucide-react';
+import { AlertTriangle, Crosshair, Dices, Swords, Target } from 'lucide-react';
+import { evaluateRoll, rollWithAdvantage } from '../lib/rollInterceptor';
 
 interface WeaponRowProps {
   weapon: WeaponAttack;
   characterName?: string;
+  /** Active conditions — drives advantage/disadvantage on attack rolls */
+  conditions?: string[];
 }
 
-export function WeaponRow({ weapon, characterName = 'Unknown' }: WeaponRowProps) {
+export function WeaponRow({ weapon, characterName = 'Unknown', conditions = [] }: WeaponRowProps) {
   // ── Attack Roll ───────────────────────────────────────────────────────────
   const handleAttackRoll = () => {
-    const roll = rollDice('d20', 1, weapon.attackBonus);
-    const nat = roll.results[0];
+    const mod = evaluateRoll(conditions, 'attack');
+
+    const rollOnce = () => Math.floor(Math.random() * 20) + 1;
+    const { chosen, all, isAdvantage, isDisadvantage } = rollWithAdvantage(rollOnce, mod.advantage);
+    const total = chosen + weapon.attackBonus;
+    const nat = chosen;
     const isCrit = nat === 20;
     const isFumble = nat === 1;
     const modStr = weapon.attackBonus >= 0 ? `+${weapon.attackBonus}` : `${weapon.attackBonus}`;
 
+    // Build reason tag for the effect stream
+    const reasonTag = mod.reasons.length > 0
+      ? ` (${isAdvantage ? 'Advantage' : 'Disadvantage'}: ${mod.reasons.map(r => r.split(':')[0]).join(', ')})`
+      : '';
+
     socket.emit('dice_roll', {
       actor: characterName,
       sides: 20,
-      count: 1,
+      count: isAdvantage || isDisadvantage ? 2 : 1,
       modifier: weapon.attackBonus,
-      total: roll.total,
-      rolls: roll.results,
-      label: weapon.name,
+      total,
+      rolls: isAdvantage || isDisadvantage ? [all[0], all[1]] : [chosen],
+      label: `${weapon.name}${reasonTag}`,
       rollType: 'Attack Roll',
       source: weapon.name,
+      conditionFlags: mod.reasons.length > 0
+        ? { advantage: mod.advantage, reasons: mod.reasons }
+        : undefined,
     });
 
+    const diceStr = isAdvantage || isDisadvantage
+      ? `[${all[0]}, ${all[1]}] → ${chosen}`
+      : `[${nat}]`;
+
     if (isCrit) {
-      toast.success(`CRITICAL HIT — ${weapon.name}`, {
-        description: `[20] ${modStr} = ${roll.total}`,
+      toast.success(`CRITICAL HIT — ${weapon.name}${reasonTag}`, {
+        description: `${diceStr} ${modStr} = ${total}`,
         duration: 4000,
       });
     } else if (isFumble) {
-      toast.error(`Natural 1 — ${weapon.name}`, {
-        description: `[1] ${modStr} = ${roll.total}`,
+      toast.error(`Natural 1 — ${weapon.name}${reasonTag}`, {
+        description: `${diceStr} ${modStr} = ${total}`,
         duration: 3000,
+      });
+    } else if (isAdvantage) {
+      toast.success(`Attack Roll: ${weapon.name} (Advantage)`, {
+        description: `${diceStr} ${modStr} = ${total}`,
+        duration: 3500,
+      });
+    } else if (isDisadvantage) {
+      toast.warning(`Attack Roll: ${weapon.name} (Disadvantage)`, {
+        description: `${diceStr} ${modStr} = ${total}`,
+        duration: 3500,
       });
     } else {
       toast(`Attack Roll: ${weapon.name}`, {
-        description: `[${nat}] ${modStr} = ${roll.total}`,
+        description: `${diceStr} ${modStr} = ${total}`,
         duration: 3000,
       });
     }
@@ -89,6 +118,8 @@ export function WeaponRow({ weapon, characterName = 'Unknown' }: WeaponRowProps)
   };
 
   // ── Derived display strings ───────────────────────────────────────────────
+  const hasAttackDisadvantage = conditions.length > 0 &&
+    evaluateRoll(conditions, 'attack').advantage === 'disadvantage';
   const attackModStr = weapon.attackBonus >= 0 ? `+${weapon.attackBonus}` : `${weapon.attackBonus}`;
   const damageModStr = weapon.damageBonus > 0
     ? `+${weapon.damageBonus}`
@@ -125,7 +156,7 @@ export function WeaponRow({ weapon, characterName = 'Unknown' }: WeaponRowProps)
       {/* ── TO HIT button ── */}
       <button
         onClick={handleAttackRoll}
-        title={`Attack Roll: 1d20 ${attackModStr}`}
+        title={`Attack Roll: 1d20 ${attackModStr}${hasAttackDisadvantage ? ' (Disadvantage)' : ''}`}
         aria-label={`Roll attack with ${weapon.name}`}
         className={cn(
           'group/atk shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md',
@@ -134,9 +165,13 @@ export function WeaponRow({ weapon, characterName = 'Unknown' }: WeaponRowProps)
           'transition-all duration-100 cursor-pointer',
           'font-display text-sm font-bold tabular-nums',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+          hasAttackDisadvantage && 'border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:border-destructive/60 hover:shadow-[0_0_8px_hsl(var(--destructive)/0.2)]',
         )}
       >
-        <Crosshair className="h-3 w-3 opacity-50 group-hover/atk:opacity-100 transition-opacity" />
+        {hasAttackDisadvantage
+          ? <AlertTriangle className="h-3 w-3 opacity-70" />
+          : <Crosshair className="h-3 w-3 opacity-50 group-hover/atk:opacity-100 transition-opacity" />
+        }
         {attackModStr}
       </button>
 

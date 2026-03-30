@@ -100,6 +100,7 @@ export function ActionsPanel({ character }: ActionsPanelProps) {
             key={weapon.id}
             weapon={weapon}
             characterName={character.name}
+            conditions={character.conditions}
           />
         ))}
 
