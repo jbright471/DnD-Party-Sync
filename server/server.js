@@ -39,6 +39,12 @@ const {
     getCharacterProvenance,
 } = require('./services/effects-engine');
 const { getPermissions, setPermissions, checkPermission } = require('./lib/permissions');
+const {
+    normalizeRollVisibility,
+    isPublicRoll,
+    buildRollRouting,
+    rollServerDice,
+} = require('./lib/rollVisibility');
 
 const {
     applyDamageEvent,
@@ -1528,13 +1534,43 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('dice_roll', ({ actor, sides, count, modifier, total, rolls, isPrivate, rollType, ability, label, source, damageType }) => {
+    function emitSaveResolved({ characterId, ability, dc, roll, passed, charName, rollVisibility }) {
+        if (rollVisibility === 'public') {
+            io.emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+            return;
+        }
+
+        io.to('dm_room').emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+        if (rollVisibility === 'private') {
+            socket.emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+            return;
+        }
+
+        // Secret and super-secret save rolls are already acknowledged by the
+        // roll routing layer, so this path only mirrors the final save result.
+    }
+
+    function handleDiceRoll(payload, { serverGenerated = false } = {}) {
+        const {
+            actor,
+            sides,
+            count,
+            modifier,
+            total,
+            rolls,
+            rollType,
+            ability,
+            label,
+            source,
+            damageType,
+        } = payload;
+        const rollVisibility = normalizeRollVisibility(payload);
+        const safeRolls = Array.isArray(rolls) ? rolls : [];
         const rollString = `${count}d${sides}${modifier !== 0 ? (modifier > 0 ? '+' + modifier : modifier) : ''}`;
-        const detailString = rolls.length > 1 ? ` (${rolls.join(' + ')})` : '';
+        const detailString = safeRolls.length > 1 ? ` (${safeRolls.join(' + ')})` : '';
         const msg = `rolled ${total} on ${rollString}${detailString}`;
 
-        // Only log non-private rolls to the shared action log
-        if (!isPrivate) logAction(actor || 'Someone', msg);
+        if (isPublicRoll(rollVisibility)) logAction(actor || 'Someone', msg);
 
         // ── Auto-populate Initiative Tracker from player Initiative rolls ──
         if (rollType === 'Initiative') {
@@ -1552,7 +1588,6 @@ io.on('connection', (socket) => {
             }
         }
 
-        // ── Broadcast to DM Roll Feed ──
         const socketInfo = playerSocketMap.get(socket.id);
         const feedEvent = {
             id: Date.now(),
@@ -1561,25 +1596,28 @@ io.on('connection', (socket) => {
             label: label || rollType || 'Roll',
             source: source || null,
             rollType: rollType || 'Roll',
-            sides, count, modifier, total, rolls,
+            sides, count, modifier, total, rolls: safeRolls,
             damageType: damageType || null,
-            isPrivate: !!isPrivate,
+            isPrivate: rollVisibility !== 'public',
+            rollVisibility,
+            serverGenerated,
             timestamp: new Date().toISOString(),
         };
-        // Always send to DM room
-        io.to('dm_room').emit('roll_feed_event', feedEvent);
-        // Only broadcast publicly if not private
-        if (!isPrivate) io.emit('roll_feed_event', feedEvent);
+        const routing = buildRollRouting(feedEvent, rollVisibility);
+        if (routing.publicEvent) io.emit('roll_feed_event', routing.publicEvent);
+        else io.to('dm_room').emit('roll_feed_event', routing.dmEvent);
+        if (routing.rollerEvent) socket.emit('secret_roll_ack', routing.rollerEvent);
 
         // ── Sync-Linked Dice Rolls: auto-resolve pending saves ──
-        if (rollType === 'saving_throw' && ability) {
-            const socketInfo = playerSocketMap.get(socket.id);
+        const normalizedRollType = String(rollType || '').toLowerCase().replace(/\s+/g, '_');
+        if ((normalizedRollType === 'saving_throw' || normalizedRollType === 'save') && ability) {
             const characterId = socketInfo?.characterId;
             if (characterId) {
                 const pending = db.prepare(
                     `SELECT * FROM pending_saves WHERE character_id = ? AND ability = ? ORDER BY created_at ASC LIMIT 1`
                 ).get(characterId, ability.toLowerCase());
                 if (pending) {
+                    const pendingVisibility = normalizeRollVisibility({ rollVisibility: pending.roll_visibility });
                     const passed = total >= pending.dc;
                     const effects = passed ? JSON.parse(pending.on_pass_json) : JSON.parse(pending.on_fail_json);
                     if (effects.length > 0) {
@@ -1593,26 +1631,41 @@ io.on('connection', (socket) => {
                     db.prepare('DELETE FROM pending_saves WHERE id = ?').run(pending.id);
                     const charName = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId)?.name ?? `Character ${characterId}`;
                     logAction('System', `${charName} ${passed ? 'passed' : 'failed'} DC ${pending.dc} ${pending.ability.toUpperCase()} save${effects.length > 0 ? ' — effects applied' : ''}.`);
-                    io.emit('save_resolved', { characterId, ability: pending.ability, dc: pending.dc, roll: total, passed, charName });
+                    emitSaveResolved({ characterId, ability: pending.ability, dc: pending.dc, roll: total, passed, charName, rollVisibility: pendingVisibility });
                 }
             }
         }
+    }
+
+    socket.on('dice_roll', (payload) => {
+        handleDiceRoll(payload);
     });
 
-    socket.on('dm_request_save', ({ targetCharacterIds, dc, ability, onFailEffects, onPassEffects }) => {
+    socket.on('server_dice_roll', (payload) => {
+        const rolled = rollServerDice(payload);
+        handleDiceRoll({
+            ...payload,
+            ...rolled,
+            rollVisibility: normalizeRollVisibility(payload),
+        }, { serverGenerated: true });
+    });
+
+    socket.on('dm_request_save', ({ targetCharacterIds, dc, ability, onFailEffects, onPassEffects, rollVisibility }) => {
         if (!Array.isArray(targetCharacterIds) || targetCharacterIds.length === 0) return;
         const normAbility = (ability || 'wis').toLowerCase();
+        const requestedVisibility = normalizeRollVisibility({ rollVisibility });
         const insertPending = db.prepare(
-            `INSERT INTO pending_saves (character_id, dc, ability, on_fail_json, on_pass_json, source) VALUES (?, ?, ?, ?, ?, 'DM')`
+            `INSERT INTO pending_saves (character_id, dc, ability, on_fail_json, on_pass_json, source, roll_visibility) VALUES (?, ?, ?, ?, ?, 'DM', ?)`
         );
         for (const charId of targetCharacterIds) {
-            insertPending.run(charId, dc || 15, normAbility, JSON.stringify(onFailEffects || []), JSON.stringify(onPassEffects || []));
+            insertPending.run(charId, dc || 15, normAbility, JSON.stringify(onFailEffects || []), JSON.stringify(onPassEffects || []), requestedVisibility);
             for (const [socketId, info] of playerSocketMap.entries()) {
                 if (info.characterId === charId) {
                     io.to(socketId).emit('pending_save_request', {
                         dc: dc || 15,
                         ability: normAbility,
                         source: 'DM',
+                        rollVisibility: requestedVisibility,
                         timestamp: new Date().toISOString(),
                     });
                 }
@@ -2211,7 +2264,15 @@ io.on('connection', (socket) => {
                 db.prepare('DELETE FROM pending_saves WHERE id = ?').run(pending.id);
                 const charName = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId)?.name ?? `Character ${characterId}`;
                 logAction('System', `${charName} ${passed ? 'passed' : 'failed'} DC ${pending.dc} ${pending.ability.toUpperCase()} save${effects.length > 0 ? ' — effects applied' : ''}.`);
-                io.emit('save_resolved', { characterId, ability: pending.ability, dc: pending.dc, roll: result, passed, charName });
+                emitSaveResolved({
+                    characterId,
+                    ability: pending.ability,
+                    dc: pending.dc,
+                    roll: result,
+                    passed,
+                    charName,
+                    rollVisibility: normalizeRollVisibility({ rollVisibility: pending.roll_visibility }),
+                });
             }
         }
     });

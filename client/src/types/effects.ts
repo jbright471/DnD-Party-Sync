@@ -1,3 +1,5 @@
+export type RollVisibility = 'public' | 'private' | 'secret' | 'super_secret';
+
 export interface RollFeedEvent {
   id: number;
   actor: string;
@@ -14,6 +16,8 @@ export interface RollFeedEvent {
   rolls: number[];
   damageType: string | null;
   isPrivate: boolean;
+  rollVisibility?: RollVisibility;
+  serverGenerated?: boolean;
   timestamp: string;
 }
 

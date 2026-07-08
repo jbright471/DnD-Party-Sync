@@ -285,6 +285,7 @@ function runMigrations() {
       on_fail_json TEXT NOT NULL DEFAULT '[]',
       on_pass_json TEXT NOT NULL DEFAULT '[]',
       source       TEXT DEFAULT 'DM',
+      roll_visibility TEXT NOT NULL DEFAULT 'public',
       created_at   TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
     );
@@ -361,6 +362,7 @@ function runMigrations() {
   addColumnSafe('characters', 'skill_proficiencies', "TEXT DEFAULT '{}'");
   addColumnSafe('characters', 'save_proficiencies', "TEXT DEFAULT '{}'");
   addColumnSafe('characters', 'attacks', "TEXT DEFAULT '[]'");
+  addColumnSafe('pending_saves', 'roll_visibility', "TEXT NOT NULL DEFAULT 'public'");
 
   // ---- Phase 18.0: Loot auction / Need-vs-Greed voting ----
   addColumnSafe('shared_loot', 'vote_state_json', "TEXT DEFAULT NULL");

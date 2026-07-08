@@ -6,6 +6,34 @@
 
 A high-performance, self-hosted companion application for D&D 5e. Real-time party management, AI-powered content generation, and a full DM command center — all running on your local hardware.
 
+## Quick Start
+
+```bash
+git clone https://github.com/jbright471/Arcane-Ally.git
+cd Arcane-Ally
+
+cp .env.example .env
+cp server/.env.example server/.env
+```
+
+# Terminal 1: backend
+```bash
+cd server
+npm install
+npm start
+```
+
+# Terminal 2: frontend
+```bash
+cd Arcane-Ally/client
+npm install
+npm run dev
+```
+
+- Frontend dev server: `http://localhost:5173`
+- Backend API and Socket.io gateway: `http://localhost:3001`
+- Default DM PIN comes from `.env` / `server/.env`; change it before exposing the app beyond your LAN.
+
 ## The Stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, Radix UI
@@ -24,6 +52,8 @@ Client emit → Server handler → DB mutation → broadcastPartyState() → All
 
 HP changes flash red (damage) or green (healing) on character cards. Latency is typically 50-100ms on local networks. Decoupled rendering ensures that ongoing local UI animations (like drag-and-drop dice rolling) are never interrupted by incoming external state mutations.
 
+Dice rolls can be public, private, secret, or super-secret. Secret modes are generated server-side and routed only to the DM, with optional masked acknowledgement for the rolling player.
+
 ### Character Management
 - **D&D Beyond Import** — paste a character URL to pull stats, equipment, spells, and inventory from the DDB API
 - **PDF Import** — upload a character sheet PDF; the AI parser extracts stats, classes, abilities, and spells
@@ -32,11 +62,13 @@ HP changes flash red (damage) or green (healing) on character cards. Latency is 
 
 ### Interactive Character Sheets
 - **Clickable Ability Scores** — click any stat to roll d20 + modifier, broadcast to the DM's Roll Feed
+- **Roll Visibility Controls** — players can roll publicly, privately to the DM, secretly with a masked acknowledgement, or super-secretly with no local result shown
 - **Skill & Save Proficiency Dots** — per-skill and per-save proficiency imported from D&D Beyond; dots show none / half / proficient / expertise with amber highlight for expertise
 - **Weapon Actions** — click to roll attack (d20 + proficiency + ability mod) and damage simultaneously; weapon stats imported from D&D Beyond
 - **Spell Casting** — one-click casting with automatic slot consumption, concentration tracking, and upcasting support
 - **Dice Roll History** — collapsible per-character roll history card (last 30 rolls) showing type badge, label, and total
 - **Condition Badges** — real-time condition display with DM-applied/removed states and duration countdown
+- **0 HP Automation** — damage that drops a character to 0 HP automatically applies `unconscious`; healing above 0 HP removes that automatic unconscious state
 - **Rest Management** — Short Rest (hit dice spending dialog) and Long Rest (full HP/slot/feature restoration)
 - **Offline HP Queue** — HP changes made while offline are queued in IndexedDB and replayed automatically on reconnect
 - **Global Feature Toggles (Grim-Rage)** — interactive toggles for character-specific states (e.g., Barbarian's Rage, Blood Hunter rites) that automatically broadcast defensive adjustments (resistances/immunities) to the server's core rules parser.
@@ -62,6 +94,7 @@ HP changes flash red (damage) or green (healing) on character cards. Latency is 
 
 - **AoE Multi-Target Effects** — select multiple combatants with checkboxes, then click the AoE button to open a multi-row effect builder (damage, heal, add/remove condition). Targets are processed concurrently using the `/api/v1/effects/bulk-apply` REST API. If one target validation fails, its nested transaction rolls back independently, keeping other targets updated.
 - **Quick Encounter Automations** — one-click "Dismiss Dead" removes all dead tracker entries; "Clear All Conditions" wipes conditions from every PC. Both accessible from the DM-only Quick Actions popover.
+- **DM-Requested Hidden Saves** — pending saving throws can be requested as public, private, secret, or super-secret rolls. Hidden saves still auto-resolve pass/fail effects without leaking totals to players.
 
 **AI Lore Console** — creative AI assistant with preset prompts (Room Desc, NPC Idea, Loot Drop, Combat). Generates atmospheric D&D content with **actionable response cards**:
 - **Items** — "Send to Party Loot" instantly drops the item into the shared loot pool
@@ -70,7 +103,7 @@ HP changes flash red (damage) or green (healing) on character cards. Latency is 
 
 Buttons disable after use to prevent duplicate spawns.
 
-**DMRollFeed** — aggregated live feed of all player dice rolls with filter toggles (ATK / DMG / SKILL / SAVE / INIT / HP / LOOT / PRIV).
+**DMRollFeed** — aggregated live feed of all player dice rolls with filter toggles (ATK / DMG / SKILL / SAVE / INIT / HP / LOOT / PRIV). Private, secret, and super-secret rolls are grouped as non-public while still showing full context to the DM.
 
 **Encounter Builder & Prep Packs** — pre-plan encounters with named monster groups. DMs can now import complete "Prep Packs" (JSON bundles containing monsters, maps, notes, and sandboxed automation triggers) by pasting them directly into the Encounter Library.
 
@@ -88,6 +121,7 @@ Buttons disable after use to prevent duplicate spawns.
 ### Audit Log & Event System
 - **Effect Preview & Consent** — DMs can dry-run effects before committing. Players get a real-time toast to **[Accept]** or **[Reject]** incoming state mutations.
 - **Effect Timeline** — immutable event store grouped by combat round, tracking damage, healing, conditions, buffs, rests, spell slots, and loot claims
+- **Curated Reactive Automation** — built-in reaction handlers can respond to effect events; the current handler set includes `retributive_healing` for self-healing reactions triggered by outgoing healing
 - **Audit Log** — human-readable descriptions of every mutation with DM-accessible undo (event reversal)
 - **Idempotency Guards** — every mutation carries a unique request ID; duplicate events from websocket reconnects are automatically deduplicated
 - **Permission System** — configurable rules for loot claiming, cross-player effects, and inventory transfers
@@ -132,6 +166,15 @@ Buttons disable after use to prevent duplicate spawns.
 
 An in-app documentation hub at `/guide` with 17+ searchable guides covering Getting Started, Player Guide, and DM Guide. Includes a contextual `<HelpButton />` component for inline UI explanations.
 
+## Documentation
+
+- [Interactive Rolls & Roll Visibility](./docs/PHASE_7.1_INTERACTIVE_ROLLS.md)
+- [Client README](./client/README.md)
+- [Legacy Parser References](./files/README.md)
+- [Project Brief](./dnd-companion-project-brief.md)
+- [Changelog](./CHANGELOG.md)
+- [Backlog](./TODO.md)
+
 ## Self-Hosting
 
 The project runs entirely on local hardware with no external cloud dependencies. The checked-in repo currently ships a production `Dockerfile`, but no `docker-compose.yml`; if you run Arcane Ally through Portainer or Compose, keep that stack configuration alongside your deployment.
@@ -164,6 +207,16 @@ The project runs entirely on local hardware with no external cloud dependencies.
    - **Memory Exhaustion Loop Guard** — An automated script (`healthcheck.js`) monitors memory and triggers container exits (exit code 1) if V8 heap utilization exceeds 500MB, preventing memory leak loops.
    - **Lightweight 3-Stage Docker Build** — The container is optimized to strip compiler libraries (`python3`, `make`, `g++`) from the final run image, keeping container size at a bare minimum.
 
+## Security & Privacy Notes
+
+Arcane Ally is intended for self-hosted, local-first play. Before publishing or sharing a deployment:
+
+- Keep real `.env` files private; commit only `.env.example` templates.
+- Do not commit SQLite databases, PDFs, private keys, certificates, or character export files.
+- The repo ignore rules exclude `.env`, `*.db`, `*.sqlite`, PDFs, common private key formats, `node_modules`, and build output.
+- Change `DM_PIN` from the sample value before exposing the app outside a trusted LAN.
+- Prefer local Ollama for AI features when campaign privacy matters.
+
 ## Project Structure
 
 ```
@@ -172,6 +225,8 @@ The project runs entirely on local hardware with no external cloud dependencies.
   /lib           Rules engine, effect engine, permissions
   /routes        REST API routes (characters, initiative, homebrew, etc.)
 /data            SQLite database persistence
+/docs            Living feature documentation
+/files           Historical parser/rules reference files
 ```
 
 ## API Surface
@@ -203,4 +258,19 @@ The project runs entirely on local hardware with no external cloud dependencies.
 | `/api/offline-bundle` | Offline character/effects payload for companion clients |
 | `/api/health` | Telemetry endpoint with uptime and V8/RSS memory metrics |
 
-**70+ Socket.io real-time events** covering character state, combat, dice, loot, voting, world, voice, effects, automation, permissions, and battlemap tokens.
+**70+ Socket.io real-time events** covering character state, combat, dice, loot, voting, world, voice, effects, automation, permissions, battlemap tokens, server-side hidden rolls, and pending save resolution.
+
+## Contributing
+
+Arcane Ally is maintained as an open-source self-hosted app. Before opening a pull request, run the relevant validation commands:
+
+```bash
+cd server && npm test && npm run lint && npm audit --audit-level=high
+cd client && npm run lint && npm run build && npm audit --audit-level=high
+```
+
+Keep private deployment files, local databases, character PDFs, and real environment values out of commits.
+
+## License
+
+See [LICENSE](./LICENSE).

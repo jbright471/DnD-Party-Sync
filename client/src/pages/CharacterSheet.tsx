@@ -478,7 +478,7 @@ export default function CharacterSheet() {
               <CardTitle className="font-display text-sm">Dice Roller</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4">
-              <DiceRoller characterName={character.name} compact />
+              <DiceRoller characterName={character.name} compact showVisibilityControls />
             </CardContent>
           </Card>
 

@@ -167,4 +167,58 @@ describe('effectEngine', () => {
     // Total count grew by 1 (new row appended)
     expect(after.length).toBe(snapshot.length + 1);
   });
+
+  // ── 9. Curated reactive healing handlers ──────────────────────────────────
+  it('applies a curated retributive healing reaction when the healer heals an ally', () => {
+    const healerId = insertCharacter(db, { name: 'Seren', max_hp: 30, current_hp: 10 });
+    const allyId = insertCharacter(db, { name: 'Brom', max_hp: 30, current_hp: 12 });
+
+    db.prepare('UPDATE characters SET inventory = ? WHERE id = ?').run(JSON.stringify([
+      {
+        name: 'Amulet of Retributive Healing',
+        equipped: true,
+        reactiveHandlers: ['retributive_healing'],
+      },
+    ]), healerId);
+
+    const records = applyPartyEffect(
+      db,
+      [{ type: 'heal', value: 8, sourceCharacterId: healerId }],
+      [{ id: allyId, type: 'character' }],
+      'Seren', 1, 0, 'action', null
+    );
+
+    expect(getSessionState(db, allyId).currentHp).toBe(20);
+    expect(getSessionState(db, healerId).currentHp).toBe(18);
+    expect(records.some(r => r.eventType === 'reaction_heal' && r.targetId === healerId)).toBe(true);
+
+    const events = getCombatTimeline(db);
+    const parent = events.find(e => e.event_type === 'heal' && e.target_id === allyId);
+    const reaction = events.find(e => e.event_type === 'reaction_heal' && e.target_id === healerId);
+    expect(reaction.parent_event_id).toBe(parent.id);
+  });
+
+  it('does not recursively trigger retributive healing from its own reaction heal', () => {
+    const healerId = insertCharacter(db, { name: 'Seren', max_hp: 30, current_hp: 1 });
+    const allyId = insertCharacter(db, { name: 'Brom', max_hp: 30, current_hp: 12 });
+
+    db.prepare('UPDATE characters SET inventory = ? WHERE id = ?').run(JSON.stringify([
+      {
+        name: 'Amulet of Retributive Healing',
+        equipped: true,
+        reactiveHandlers: ['retributive_healing'],
+      },
+    ]), healerId);
+
+    applyPartyEffect(
+      db,
+      [{ type: 'heal', value: 8, sourceCharacterId: healerId }],
+      [{ id: allyId, type: 'character' }],
+      'Seren', 1, 0, 'action', null
+    );
+
+    const reactionEvents = getCombatTimeline(db).filter(e => e.event_type === 'reaction_heal');
+    expect(reactionEvents).toHaveLength(1);
+    expect(getSessionState(db, healerId).currentHp).toBe(9);
+  });
 });

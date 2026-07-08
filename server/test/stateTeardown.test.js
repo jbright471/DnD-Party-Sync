@@ -6,6 +6,7 @@ const {
   getResolvedCharacterState,
   applyConditionEvent,
   applyDamageEvent,
+  applyHealEvent,
   applyBuffEvent,
 } = require('../lib/rulesIntegration');
 
@@ -78,10 +79,9 @@ describe('Round-Teardown & Severe State Changes', () => {
     expect(resolved.currentHp).toBe(0);
     // Concentration must be broken on 0 HP
     expect(resolved.concentratingOn).toBe(null);
-    // Unconscious condition is normally applied by the GM or rules engine hook; let's check if the system did it. 
-    // Right now, applyDamageEvent drops concentration, but does it add unconscious? 
-    // Usually the game rules dictate that hitting 0 HP = unconscious. If it's not automated yet, 
-    // we should test what currently happens.
+    expect(resolved.conditions).toContain('unconscious');
+    expect(resolved.rollModifiers.attacks.incapacitated).toBe(true);
+    expect(resolved.rollModifiers.saving_throws.STR.autoFail).toBe(true);
   });
   
   it('should handle removing conditions that alter stats when unconscious is applied', () => {
@@ -101,5 +101,20 @@ describe('Round-Teardown & Severe State Changes', () => {
     // Both Unconscious and Restrained give disadvantage to attacks, but Unconscious incapacitates
     expect(resolved.rollModifiers.attacks.incapacitated).toBe(true);
     expect(resolved.rollModifiers.saving_throws.STR.autoFail).toBe(true); // From Unconscious STR/DEX saves
+  });
+
+  it('should remove automatic unconscious when healing above 0 HP', () => {
+    applyDamageEvent(db, 1, 30, 'slashing');
+
+    let resolved = getResolvedCharacterState(db, 1);
+    expect(resolved.currentHp).toBe(0);
+    expect(resolved.conditions).toContain('unconscious');
+
+    applyHealEvent(db, 1, 5);
+    resolved = getResolvedCharacterState(db, 1);
+
+    expect(resolved.currentHp).toBe(5);
+    expect(resolved.conditions).not.toContain('unconscious');
+    expect(resolved.rollModifiers.attacks.incapacitated).toBe(false);
   });
 });

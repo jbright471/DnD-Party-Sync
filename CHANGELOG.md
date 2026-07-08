@@ -4,17 +4,34 @@ All notable changes to the **Arcane Ally** project will be documented in this fi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [1.0.2] - 2026-07-08
+
+### Added
+- **Roll Visibility Modes**: Dice rolls now support public, private, secret, and super-secret visibility. Secret rolls are rolled server-side so players can voluntarily hide rolls from themselves while still routing full results to the DM.
+- **DM Save Visibility Controls**: DM-requested saving throws can now specify visibility, allowing public saves, private player+DM saves, DM-only secret saves, or super-secret saves with no player acknowledgement.
+- **Curated Reactive Automation**: Added the first built-in reactive handler, `retributive_healing`, which can trigger a self-heal reaction from equipped or homebrew item metadata without recursive loops.
+
+### Changed
+- **0 HP Rules Lifecycle**: Damage that drops a character to 0 HP now automatically applies `unconscious`; healing above 0 HP removes the automatic unconscious condition.
+- **Roll Feed Filtering**: DM roll feed privacy filters now group private, secret, and super-secret rolls consistently under non-public roll visibility.
+- **Documentation Refresh**: Updated public, developer, and agent-facing docs to reflect the current Arcane Ally app name, local-first privacy posture, and active feature set.
+- **Arcane Codex Onboarding**: Reworked the in-app guide into task-first categories, added roll visibility/troubleshooting guidance, and improved rendering for tables and code examples.
+
+### Fixed
+- **Hidden Save Routing**: Legacy blind-roll save resolution now respects the pending save visibility mode instead of broadcasting hidden results publicly.
+- **Secret Roll Acknowledgements**: Hidden saving throws no longer emit duplicate masked acknowledgements to the rolling player.
+
 ## [1.0.1] - 2026-06-21
 
 ### Added
-- **🔥 Global Feature Toggles (Grim-Rage)**: Added interactive toggles on Character Sheets for class-specific states (e.g., Barbarian's Rage, Blood Hunter rites) that automatically broadcast defensive adjustments (resistances/immunities) to the server's core rules parser.
-- **👁️ Encounter Cast View**: Created a standalone read-only cast window located at `/encounter/:id/cast` designed with a dark-fantasy aesthetic, ideal for casting the live party state and initiative order to a secondary monitor or TV screen.
+- **Global Feature Toggles (Grim-Rage)**: Added interactive toggles on Character Sheets for class-specific states (e.g., Barbarian's Rage, Blood Hunter rites) that automatically broadcast defensive adjustments (resistances/immunities) to the server's core rules parser.
+- **Encounter Cast View**: Created a standalone read-only cast window located at `/encounter/:id/cast` designed with a dark-fantasy aesthetic, ideal for casting the live party state and initiative order to a secondary monitor or TV screen.
 
 ### Changed
-- **⚙️ Decoupled Visual State**: Insulated local UI animations (e.g., DiceRoller drag-and-drop gestures) from websocket state mutations using React component memoization and state decoupling, preventing UI reset glitches during combat.
-- **🛠️ Centralized Rules Parsing**: Abstracted string matching logic for conditional rules and modifiers away from the frontend client and into the backend's `rules-parser` and `rulesEngine.js` integrations.
-- **🧹 Transient State Teardown**: Updated rules lifecycle to properly drop transient states (like active concentration or temporary modifiers) when a character's HP reaches 0.
-- **📖 Arcane Codex Update**: Appended dedicated chapters to the internal documentation guidebook detailing the Grim-Rage feature toggles and the Encounter Cast View.
+- **Decoupled Visual State**: Insulated local UI animations (e.g., DiceRoller drag-and-drop gestures) from websocket state mutations using React component memoization and state decoupling, preventing UI reset glitches during combat.
+- **Centralized Rules Parsing**: Abstracted string matching logic for conditional rules and modifiers away from the frontend client and into the backend's `rules-parser` and `rulesEngine.js` integrations.
+- **Transient State Teardown**: Updated rules lifecycle to properly drop transient states (like active concentration or temporary modifiers) when a character's HP reaches 0.
+- **Arcane Codex Update**: Appended dedicated chapters to the internal documentation guidebook detailing the Grim-Rage feature toggles and the Encounter Cast View.
 
 ## [1.0.0] - 2026-06-08
 

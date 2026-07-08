@@ -83,9 +83,12 @@ function ConcentrationAlerts() {
 
 function SavingThrowAlerts() {
   useEffect(() => {
-    const onPendingSave = ({ dc, ability, source }: { dc: number; ability: string; source: string }) => {
+    const onPendingSave = ({ dc, ability, source, rollVisibility }: { dc: number; ability: string; source: string; rollVisibility?: string }) => {
+      const hidden = rollVisibility === 'secret' || rollVisibility === 'super_secret';
       toast.warning(`${source} requests a DC ${dc} ${ability.toUpperCase()} saving throw!`, {
-        description: `Roll your ${ability.toUpperCase()} save — the result will auto-apply.`,
+        description: hidden
+          ? `Roll your ${ability.toUpperCase()} save — the result will be sealed for the DM.`
+          : `Roll your ${ability.toUpperCase()} save — the result will auto-apply.`,
         duration: 30000,
       });
     };
@@ -98,11 +101,20 @@ function SavingThrowAlerts() {
       }
     };
 
+    const onSecretRollAck = ({ message, label }: { message?: string; label?: string }) => {
+      toast.message(message || 'Fate sealed', {
+        description: label ? `${label} result sent to the DM.` : 'The DM has the result.',
+        duration: 4000,
+      });
+    };
+
     socket.on('pending_save_request', onPendingSave);
     socket.on('save_resolved', onSaveResolved);
+    socket.on('secret_roll_ack', onSecretRollAck);
     return () => {
       socket.off('pending_save_request', onPendingSave);
       socket.off('save_resolved', onSaveResolved);
+      socket.off('secret_roll_ack', onSecretRollAck);
     };
   }, []);
   return null;

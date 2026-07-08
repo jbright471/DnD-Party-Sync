@@ -1,74 +1,33 @@
-# Arcane Ally — PDF Character Parser
+# Arcane Ally Legacy Parser References
 
-Extracts structured character data from D&D Beyond PDF exports using an LLM.
+This folder contains older reference/prototype files from the character parser and rules-engine exploration phase. The active application code now lives in:
 
-## File Structure
+- `client/` - React/Vite frontend
+- `server/` - Express, Socket.io, SQLite backend
+- `server/routes/importer.js` - active D&D Beyond and PDF import route logic
+- `server/lib/validator.js` and `server/lib/importValidator.js` - active import validation
+- `server/lib/rulesEngine.js` and `server/lib/rulesIntegration.js` - active rules calculations and state mutation helpers
 
-```
-dnd-parser/
-├── types/
-│   └── character.ts          # Character + SessionState TypeScript interfaces
-├── lib/
-│   ├── parsePdfToCharacter.ts # Core parser: PDF → text → LLM → Character object
-│   └── validateCharacter.ts   # Sanity-checks parsed output before DB write
-└── examples/
-    └── usage.ts               # Wiring examples for Claude, Ollama, OpenAI
-```
+Keep this folder as historical implementation reference unless a file has been deliberately promoted into `client/` or `server/`.
 
-## Quick Start
+## Current PDF Import Posture
 
-```bash
-npm install pdf-parse uuid @anthropic-ai/sdk
-npm install -D @types/pdf-parse @types/uuid typescript ts-node
+Arcane Ally is designed for self-hosted play. PDF parsing and item/rules extraction should use the configured local Ollama endpoint from `.env`:
 
-export ANTHROPIC_API_KEY=sk-ant-...
-
-npx ts-node examples/usage.ts ./your-character.pdf
+```env
+OLLAMA_URL=http://localhost:11434
 ```
 
-## How It Works
+Do not commit real API keys, private PDFs, character exports, or local database files. The repo ignore rules already exclude `.env`, PDFs, local SQLite files, private key formats, `node_modules`, and build output.
 
-1. **`extractTextFromPdf`** — uses `pdf-parse` to pull raw text from the DDB PDF
-2. **`buildParserSystemPrompt`** — returns the LLM prompt with all extraction rules
-3. **`parseCharacterFromText`** — calls your LLM, cleans the response, parses JSON
-4. **`parsePdfToCharacter`** — top-level orchestrator (steps 1–3 combined)
-5. **`createInitialSessionState`** — builds the starting `SessionState` for a character
-6. **`validateCharacter`** — catches the most common LLM extraction errors
+## Historical Flow Captured Here
 
-## LLM Backend Options
+The prototype files demonstrate these concepts:
 
-| Backend | Accuracy | Cost | Privacy |
-|---|---|---|---|
-| Claude API (claude-opus-4-5) | Best | ~$0.01/parse | Data leaves homelab |
-| Local Ollama (llama3.1:8b) | Good | Free | Fully local |
-| OpenAI gpt-4o | Best | ~$0.01/parse | Data leaves homelab |
+1. Extract text from a character-sheet PDF.
+2. Ask an LLM to return strict JSON.
+3. Validate that ability scores, HP, proficiency, slots, and inventory are plausible.
+4. Create initial session state for HP, conditions, spell slots, and resources.
+5. Hand validated data to the live app's server-side importer.
 
-For a homelab/private game, **Ollama with llama3.1:8b or qwen2.5:14b** is recommended.
-For maximum accuracy (especially for complex multiclass sheets), use Claude.
-
-## Known Edge Cases Handled
-
-- **Dual-class spellcasting** — two entries in `spellcasting[]`, matched to classes
-- **Pact Magic slots** — counted alongside regular slots at their level
-- **Always-prepared spells** — `alwaysPrepared: true`, no slot decrement
-- **Item-granted spells** — `grantsSpell` on inventory item, source on spell
-- **Concentration tracking** — flagged on spell, enforced by rules engine
-- **Toggle features** — `resourceType: "toggle"`, no maxUses (e.g. Crimson Rite)
-- **Mixed hit dice** — multiclass characters with different die types per class
-
-## What the Validator Catches
-
-The #1 LLM mistake is extracting **modifiers instead of ability scores** 
-(returning 4 instead of 18 for DEX). The validator catches this and returns 
-a descriptive error before bad data reaches your DB.
-
-Other checks: HP range, proficiency bonus vs. level, spell slot counts (5e max 4/level),
-item-granted spells present in spell list, hit dice total matching total level.
-
-## Next Steps
-
-Once characters import cleanly, build:
-- **`/api/sessions`** — create a session, assign characters
-- **`/api/sessions/:id/event`** — POST events (APPLY_DAMAGE, ADD_CONDITION, etc.)
-- **Rules engine** — `resolveCurrentAC()`, `resolveAttackBonus()`, etc.
-- **WebSocket broadcast** — emit updated `SessionState` to all connected clients
+Use the active server routes and tests as the source of truth before reusing any code from this folder.

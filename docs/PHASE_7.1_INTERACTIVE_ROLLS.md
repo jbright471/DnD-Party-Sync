@@ -1,31 +1,53 @@
-# Phase 7.1: Interactive Dice Rolls & UI Intelligence
+# Interactive Rolls & Roll Visibility
 
 ## Overview
-Phase 7.1 focused on transforming the static Character Sheet into an interactive rolling tool. Players and DMs can now click on stats and skills to trigger real-time dice rolls that are synchronized across the entire party.
 
-## Key Features
+Interactive rolls turn Arcane Ally character sheets into live tabletop controls. Players and DMs can roll from ability scores, saving throws, skills, weapons, and the dice tray while the server routes the result to the right audience.
 
-### 1. Click-to-Roll System
-- **Attributes Tab**: Clicking any of the six major attribute blocks triggers a **Saving Throw** roll.
-- **Skills Tab**: Clicking any skill row triggers an **Ability Check** for that specific skill.
-- **Roll Logic**:
-  - Automatically adds the correct Ability Modifier.
-  - Detects and applies **Proficiency Bonuses** (+3 for current level).
-  - Handles **Advantage** (rolls 2d20 and takes the highest).
+## Current Roll Types
 
-### 2. D&D Beyond Integration
-- **Modifier Parsing**: Dynamically parses the `raw_dndbeyond_json` to identify specific saving throw proficiencies and skill advantages.
-- **PDF Fallback**: For characters imported via PDF, a secondary parsing layer extracts saving throw data from the `data_json` field.
+- **Ability checks, saving throws, skills, and initiative** use `RollableStat.tsx`.
+- **Freeform dice pools** use `DiceRoller.tsx`.
+- **Weapon attacks and damage** use character action components and emit structured roll metadata.
+- **DM-requested saves** are issued from `DmAutomationPanel.tsx` and can auto-resolve pending effects.
 
-### 3. Visual Indicators
-- **Proficiency Dots**: Golden filled circles (`bg-dnd-gold`) indicate proficiency in a saving throw or skill.
-- **Advantage Badges**: A green 'A' badge appears next to stats/skills where the character has a mechanical advantage.
+## Visibility Modes
 
-### 4. Real-time logging
-- All rolls are broadcast via Socket.io to the global **Session Log**.
-- Logs show the character name, the total result, the type of roll, and the detailed math (e.g., `1d20+7` or `[18, 5]+7` for advantage).
+| Mode | Full result visible to | Intended use |
+|---|---|---|
+| `public` | Everyone | Normal table rolls |
+| `private` | DM and rolling player | Player-visible private checks |
+| `secret` | DM only, masked player acknowledgement | Player chooses or DM requests a hidden result |
+| `super_secret` | DM only, no player acknowledgement | Fully hidden DM-only resolution |
+
+The client persists the selected roll visibility in `localStorage` under `arcane_roll_visibility`.
+
+## Server-Side Hidden Rolls
+
+Secret and super-secret rolls are generated through `server_dice_roll` rather than client-side dice math. The backend validates the dice shape, rolls the dice, applies advantage/disadvantage when requested, and then routes the event through `server/lib/rollVisibility.js`.
+
+This prevents hidden totals from being visible in browser state or developer tools before the DM receives them.
+
+## Pending Save Resolution
+
+DM-requested saves are stored in `pending_saves` with a `roll_visibility` value. When the matching save roll arrives:
+
+1. The server compares the result against the pending DC.
+2. Pass/fail effects are applied through the effect engine.
+3. The pending save row is deleted.
+4. `save_resolved` is emitted according to the pending visibility mode.
+
+Legacy blind-roll responses also respect the stored pending save visibility.
 
 ## Technical Implementation
-- **Component**: `CharacterSheetModal.jsx`
-- **Logic**: Use of `React.useMemo` for efficient modifier extraction and `rollCheck` helper for centralized dice math.
-- **Communication**: `log_action` socket event for party-wide synchronization.
+
+- **Client components**: `DiceRoller.tsx`, `RollableStat.tsx`, `DmAutomationPanel.tsx`, `DMRollFeed.tsx`
+- **Client types**: `client/src/types/effects.ts` (`RollVisibility`)
+- **Server routing**: `server/lib/rollVisibility.js`
+- **Socket handlers**: `dice_roll`, `server_dice_roll`, `dm_request_save`, `save_resolved`, `secret_roll_ack`
+- **Database**: `pending_saves.roll_visibility`
+- **Tests**: `server/test/rollVisibility.test.js`
+
+## DM Roll Feed
+
+The DM roll feed groups private, secret, and super-secret rolls as non-public rolls. Secret modes show lock/visibility metadata to the DM while preventing public broadcast.

@@ -1,8 +1,8 @@
 /**
  * AppGuidebook — the master documentation hub for Arcane Ally.
  * Split-pane layout: sidebar navigation on the left, content on the right.
- * Dark-fantasy themed, searchable, with sections for Getting Started,
- * Player Guide, and DM Guide.
+ * Dark-fantasy themed, searchable, with task-first sections for players,
+ * DMs, core mechanics, AI/homebrew, host setup, and troubleshooting.
  */
 
 import { useState, useMemo } from 'react';
@@ -21,7 +21,7 @@ import {
 interface GuideSection {
   id: string;
   title: string;
-  category: 'getting-started' | 'player' | 'dm';
+  category: 'start-here' | 'player-tasks' | 'dm-tasks' | 'core-mechanics' | 'ai-homebrew' | 'host-admin' | 'troubleshooting';
   icon: typeof BookOpen;
   content: string;
 }
@@ -31,7 +31,7 @@ const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'welcome',
     title: 'Welcome to Arcane Ally',
-    category: 'getting-started',
+    category: 'start-here',
     icon: BookOpen,
     content: `# Welcome to Arcane Ally
 
@@ -46,12 +46,12 @@ Unlike static character sheets, Arcane Ally is **event-driven**. When the DM dea
 ## Core Concepts
 
 - **Characters** are imported from D&D Beyond or created manually
-- **Session State** tracks HP, conditions, spell slots, and hit dice separately from the base character — so your sheet stays clean between sessions
-- **The Effect Timeline** is an immutable audit log of every game event — damage, healing, conditions, rests, and more
+- **Base Sheet** is your permanent character: stats, class, level, max HP, equipment, proficiencies, and spell list
+- **Session State** is tonight's pencil marks: current HP, used spell slots, conditions, buffs, concentration, and spent hit dice
+- **The Effect Timeline** is the table's receipt book for every major game event — damage, healing, conditions, rests, and undo actions
 - **The Compendium** is your homebrew library plus a searchable gateway to the entire 5e SRD — monsters, spells, and items at your fingertips
 - **Actionable AI** — the AI Lore Console generates items, monsters, and NPCs with interactive buttons to inject them directly into the live game state
 - **Voice Chat** — built-in WebRTC voice communication, no external apps needed
-- **Idempotency Guards** — every mutation carries a unique request ID, preventing duplicate events from websocket reconnects
 
 ## Quick Start
 
@@ -59,12 +59,70 @@ Unlike static character sheets, Arcane Ally is **event-driven**. When the DM dea
 2. **Join the party** — navigate to the Party Lobby to see everyone
 3. **Open your sheet** — click your character card to access the full interactive sheet
 4. **Roll dice** — click any ability score, saving throw, or weapon to roll instantly
-5. **Use the Guide** — look for the small **?** icons next to UI elements for contextual help`,
+5. **Use the Codex** — search for what you want to do, then follow the **Where to go** path at the top of each guide`,
+  },
+  {
+    id: 'common-tasks',
+    title: 'Common Table Tasks',
+    category: 'start-here',
+    icon: ClipboardList,
+    content: `# Common Table Tasks
+
+Start here when you know what you want to do but not where Arcane Ally put the button.
+
+## Player: Join the Game
+
+> **Where to go:** \`Sidebar -> Party Lobby -> click your character card\`
+
+1. Open the app URL your DM gives you.
+2. Go to **Party Lobby**.
+3. Click your character card.
+4. Use your sheet for rolls, attacks, spell slots, HP visibility, inventory, and conditions.
+
+## Player: Roll Something
+
+> **Where to go:** \`Character Sheet -> ability score / saving throw / skill / weapon / Dice Roller\`
+
+1. Click the stat, save, skill, weapon, or dice tray control.
+2. Choose a roll visibility if the Dice Roller is open.
+3. The DM sees the result in the Roll Feed.
+4. Public rolls also appear to the table.
+
+## DM: Start Combat
+
+> **Where to go:** \`Sidebar -> DM Dashboard -> Initiative Tracker\`
+
+1. Add monsters with **+**, **Compendium -> Add to Combat**, or an AI Lore Console monster card.
+2. Click **Roll** to roll initiative for combatants.
+3. Use **Next** / **Back** to move through turns.
+4. Apply HP changes, conditions, AoE effects, or presets from the combat controls.
+
+## DM: Fix a Mistake
+
+> **Where to go:** \`DM Dashboard -> Effect Timeline or Audit Log -> undo button\`
+
+1. Find the mistaken event.
+2. Click the curved undo arrow.
+3. Arcane Ally applies the opposite change and records the correction.
+
+## DM: Create Homebrew or Loot
+
+> **Where to go:** \`Sidebar -> Compendium\` or \`DM Dashboard -> AI Lore Console\`
+
+1. Use **Compendium** for durable monsters, spells, and items.
+2. Use **AI Lore Console** for fast session inspiration.
+3. Review AI-generated numbers before putting them into the live game.
+
+## Host: Run Arcane Ally
+
+> **Where to go:** \`Arcane Codex -> Host/Admin -> Self-Hosting & Deployment\`
+
+Players do not need hosting knowledge. The host should configure \`.env\`, start the backend, start the frontend, and make sure the DM PIN and database storage are safe.`,
   },
   {
     id: 'importing',
     title: 'Character Integration',
-    category: 'getting-started',
+    category: 'start-here',
     icon: Users,
     content: `# Character Integration & Creation
 
@@ -111,7 +169,7 @@ If you level up, gain items, or edit your character on D&D Beyond later, you do 
   {
     id: 'ui-overview',
     title: 'Understanding the Interface',
-    category: 'getting-started',
+    category: 'start-here',
     icon: Map,
     content: `# Understanding the Interface
 
@@ -142,14 +200,18 @@ Your character sheet is divided into panels:
 
 ## Contextual Help
 
-Look for the small **?** icons (help buttons) throughout the interface. Click or hover to see a styled popover explaining that specific UI element. These provide quick, in-context explanations without leaving the page.`,
+Many dense controls include hover text or tooltips. If a button uses only an icon, hover it on desktop or press-and-hold on touch devices to reveal its label when supported.
+
+For deeper help, open **Guide** from the sidebar and search for the task you are trying to complete.`,
   },
   {
     id: 'self-hosting',
     title: 'Self-Hosting & Deployment',
-    category: 'getting-started',
+    category: 'host-admin',
     icon: Globe,
     content: `# Self-Hosting & Deployment
+
+This section is for the person hosting Arcane Ally. Players can skip it and use the app URL their DM provides.
 
 Arcane Ally is designed to run entirely on your local hardware or a home server. All features, databases, and AI processes run locally, ensuring that your campaigns are self-contained and private.
 
@@ -187,6 +249,17 @@ Arcane Ally can run as a local development pair or behind your own Portainer/Com
 
 For Portainer or Compose deployments, map frontend traffic to the Vite/static frontend service and route \`/api\` plus \`/socket.io\` traffic to the backend service on port \`3001\`.
 
+## Host Checklist
+
+- Change the sample **DM_PIN** before inviting players.
+- Keep real \`.env\` files private.
+- Keep SQLite database files out of Git.
+- Back up the database before major updates.
+- Confirm the backend starts on port **3001**.
+- Confirm the frontend loads on port **5173** or your production domain.
+- Confirm Ollama is reachable if you want AI features.
+- Use HTTPS if players need browser microphone access for voice chat.
+
 ## WebRTC Voice Chat Security
 
 > [!WARNING]
@@ -215,13 +288,15 @@ For robust deployment monitoring, Arcane Ally comes configured with container he
   {
     id: 'combat-rolling',
     title: 'Combat & Rolling',
-    category: 'player',
+    category: 'player-tasks',
     icon: Dices,
     content: `# Combat & Rolling
 
 Everything in Arcane Ally is designed to be **click-to-roll**. No manual math required.
 
 ## Ability Checks
+
+> **Where to go:** \`Character Sheet -> Ability Scores / Saving Throws / Skills\`
 
 Click any of the six **Ability Score blocks** on your character sheet. This immediately:
 
@@ -233,6 +308,8 @@ The modifier is calculated automatically from your imported ability scores: \`fl
 
 ## Weapon Attacks
 
+> **Where to go:** \`Character Sheet -> Actions Panel\`
+
 In the **Actions Panel**, each weapon shows its attack bonus and damage dice. Clicking a weapon:
 
 1. Rolls the **Attack Roll** — d20 + proficiency bonus + ability modifier
@@ -242,6 +319,8 @@ In the **Actions Panel**, each weapon shows its attack bonus and damage dice. Cl
 > **Tip:** Weapons tagged with *Finesse* use the higher of STR or DEX automatically.
 
 ## Spell Casting
+
+> **Where to go:** \`Character Sheet -> Spells panel\`
 
 From the **Spells panel**, click a prepared spell to cast it:
 
@@ -261,20 +340,66 @@ To upcast a spell at a higher level:
 
 > **Important:** You cannot upcast if you have no remaining slots at the chosen level. The button will be disabled.
 
-## The DM Sees Everything
+## What the DM Sees
 
-Every roll you make is broadcast to the DM's **Roll Feed** panel in real-time. The feed shows:
+Roll routing depends on the visibility mode. For normal public and private rolls, the DM's **Roll Feed** shows:
 - Your character name
 - The roll type (ability check, attack, damage)
 - The total result and individual dice
 - The damage type (if applicable)
 
-This means the DM never has to ask "What did you roll?" — it's already on their screen.`,
+For **secret** and **super-secret** rolls, the full result goes only to the DM. Secret rolls show the player a masked "Fate sealed" message; super-secret rolls show no local result.`,
+  },
+  {
+    id: 'roll-visibility',
+    title: 'Roll Visibility & Secret Rolls',
+    category: 'core-mechanics',
+    icon: Eye,
+    content: `# Roll Visibility & Secret Rolls
+
+Arcane Ally supports several roll privacy levels. Pick the one that matches the table moment.
+
+> **Where to go:** \`Character Sheet -> Dice Roller -> Visibility selector\`
+
+## Visibility Modes
+
+| Mode | Full result visible to | Player sees |
+|---|---|---|
+| Public | Everyone | Full result |
+| Private | DM and rolling player | Full result |
+| Secret | DM only | "Fate sealed" acknowledgement |
+| Super-secret | DM only | Nothing |
+
+## When to Use Each Mode
+
+- **Public**: attacks, damage, most table-facing checks.
+- **Private**: a player wants the result visible to themselves and the DM, but not the whole party.
+- **Secret**: a player or DM wants only the DM to know the number, but the player should know the roll happened.
+- **Super-secret**: the DM wants the roll resolved silently.
+
+## How Hidden Rolls Stay Hidden
+
+For secret and super-secret rolls, the browser does not roll the dice. Instead:
+
+1. The player clicks the roll.
+2. The server rolls the dice.
+3. The server sends the full result to the DM.
+4. The player receives only the allowed feedback for that visibility mode.
+
+This prevents hidden totals from appearing in the player's local browser state.
+
+## DM-Requested Saves
+
+> **Where to go:** \`DM Dashboard -> Automation -> Request Save\`
+
+The DM can request a saving throw and choose its visibility. When the player rolls the matching save, Arcane Ally compares it to the DC and applies pass/fail effects automatically.
+
+If the save is secret, the player does not see the number. The DM still receives the full result and the effect resolution.`,
   },
   {
     id: 'resting',
     title: 'Resting & Recovery',
-    category: 'player',
+    category: 'player-tasks',
     icon: Moon,
     content: `# Resting & Recovery
 
@@ -319,7 +444,7 @@ The DM can see exactly when each player rested and what was restored.`,
   {
     id: 'conditions-buffs',
     title: 'Conditions & Buffs',
-    category: 'player',
+    category: 'player-tasks',
     icon: Shield,
     content: `# Conditions & Buffs
 
@@ -358,15 +483,17 @@ Interactive toggles for character-specific states (e.g., Barbarian's Rage, Blood
   {
     id: 'session-state',
     title: 'Session State vs. Base Sheet',
-    category: 'player',
+    category: 'core-mechanics',
     icon: Heart,
     content: `# Session State vs. Base Sheet
 
-Arcane Ally enforces a strict separation between your character's **Base Sheet** and their **Active Session State**. This architecture ensures that your permanent character data remains pristine and unaltered between games, even when a session gets chaotic.
+Arcane Ally keeps your character in two layers.
+
+**Base Sheet** is the character written in ink. **Session State** is the pencil marks from tonight's game.
 
 ## What is Base Sheet Data?
 
-Base Sheet data represents your permanent character statistics—the values that define your character over their entire career. These are imported from your character sheet sources or entered manually, and are only modified when you level up or change gear:
+Base Sheet data is permanent character information. It usually changes when you level up, resync D&D Beyond, or edit equipment:
 - **Primary Attributes**: Strength, Dexterity, Constitution, Intelligence, Wisdom, and Charisma.
 - **Proficiencies & Skills**: Saving throw proficiencies, skill proficiencies, and languages.
 - **Maximum Resources**: Maximum Hit Points (HP) and maximum spell slots.
@@ -375,26 +502,39 @@ Base Sheet data represents your permanent character statistics—the values that
 
 ## What is Active Session State?
 
-Active Session State represents the temporary, highly dynamic resources that fluctuate continuously during a game session. These values exist entirely in the live session layer:
+Session State is what changes during play:
 - **Current Hit Points**: Fluctuates from damage, healing, or temporary HP.
 - **Expended Resources**: Used spell slots and expended hit dice.
 - **Temporary Effects**: Active conditions (e.g. *Prone*, *Stunned*) and active spell buffs (e.g. *Bless*, *Shield*).
 - **Concentration**: Whether you are currently concentrating on an active spell.
 
+## What Changes Which Layer?
+
+| Action | Changes |
+|---|---|
+| Take damage or healing | Session State |
+| Cast a spell and spend a slot | Session State |
+| Gain or lose a condition | Session State |
+| Level up on D&D Beyond and sync | Base Sheet |
+| Equip a new item | Base Sheet plus recalculated live stats |
+| Long rest | Session State reset |
+
 ## Why This Separation Matters
 
-By keeping session state isolated, Arcane Ally offers powerful advantages:
+This separation keeps mistakes fixable.
 
-> **Data Safety**: If a player accidentally clicks "Cast Spell" at the wrong level or receives incorrect damage, the DM can reverse the action instantly. Your base sheet is never corrupted because the database stores the base values and live session states independently.
+> **Example:** If the DM accidentally deals 18 damage instead of 8, they can undo the damage event. Your permanent character sheet is not rewritten.
 
-> **Clean Teardowns**: When a campaign session is concluded or a character is imported again, all temporary HP, spent spell slots, and condition status tracks are cleanly isolated. You start fresh without having to manually erase scribbled HP numbers or check boxes.
+> **Example:** If you resync after leveling up, Arcane Ally can update your base stats without wiping tonight's current HP or active conditions.
 
-> **Offline Replays**: If your internet connection drops, your local companion view and sheet continue to track your session modifications in IndexedDB. Once reconnected, the client seamlessly replays your live session updates to the server, ensuring zero data loss.`,
+## Offline Replays
+
+If your connection drops, HP changes can queue locally. When you reconnect, Arcane Ally replays those session changes to the server so the table catches up.`,
   },
   {
     id: 'equipment-inventory',
     title: 'Equipment & Inventory',
-    category: 'player',
+    category: 'player-tasks',
     icon: Gem,
     content: `# Equipment & Inventory
 
@@ -463,7 +603,7 @@ To prevent rule abuse, the engine intercepts and enforces equipment stacking lim
   {
     id: 'god-eye-view',
     title: 'The God-Eye View',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: Eye,
     content: `# The God-Eye View
 
@@ -504,13 +644,15 @@ You can **reverse** any event from the Audit Log by clicking the undo button. Th
   {
     id: 'ai-lore-console',
     title: 'AI Lore Console & Actionable Responses',
-    category: 'dm',
+    category: 'ai-homebrew',
     icon: Sparkles,
     content: `# AI Lore Console
 
 The **AI Lore Console** at the bottom of the DM Dashboard is your creative assistant. It connects to your local Ollama instance to generate atmospheric, high-fantasy content on the fly.
 
 ## Basic Usage
+
+> **Where to go:** \`Sidebar -> DM Dashboard -> AI Lore Console at the bottom\`
 
 Type any prompt and press Enter (or click **Ask**). The AI will respond with evocative, D&D-flavored text. Example prompts:
 
@@ -541,6 +683,8 @@ NPC responses include role, personality, appearance, and a secret. Click **Save 
 
 > **Tip:** Once you click an action button, it disables and shows "Added!" to prevent accidental duplicates. The entity is immediately live in the game state.
 
+> **Review first:** AI is useful at the table, but it can be generous with item math or monster numbers. Read the action card before injecting it into combat or loot.
+
 ## Send to Notes
 
 Every lore response has a **Send to Notes** button that saves the narrative text (without entity data) to the Party Notes, making it accessible to all players.`,
@@ -548,7 +692,7 @@ Every lore response has a **Send to Notes** button that saves the narrative text
   {
     id: 'combat-management',
     title: 'Running Combat',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: Swords,
     content: `# Running Combat
 
@@ -626,7 +770,7 @@ For pre-planned encounters:
   {
     id: 'loot-management',
     title: 'Managing Loot & Inventory',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: Gem,
     content: `# Managing Loot & Inventory
 
@@ -668,7 +812,7 @@ Items saved to the Compendium can be dropped into the loot pool or assigned dire
   {
     id: 'automation-permissions',
     title: 'Automation & Permissions',
-    category: 'dm',
+    category: 'core-mechanics',
     icon: Zap,
     content: `# Automation & Permissions
 
@@ -708,10 +852,17 @@ Click any cell to activate it. Unavailable combinations (e.g. "Approval" for a b
 
 ## Idempotency Guards
 
-Every mutation in the system carries a unique **request ID**. If a reconnecting websocket replays the same event, the server detects the duplicate and skips it. This prevents:
-- Double-applying damage on reconnect
-- Duplicate buff applications
-- Accidental loot duplication
+Idempotency guards are duplicate-click protection.
+
+Sometimes a browser reconnects, a player double-clicks, or a network message gets resent. Arcane Ally gives each important action a one-time receipt number.
+
+If the same receipt arrives twice, the server ignores the duplicate. This prevents:
+
+- Damage applying twice
+- Buffs being added twice
+- Loot being claimed twice
+
+You do not need to manage this manually. If something still looks wrong, check the Audit Log and undo the event.
 
 ## Event Reversal
 
@@ -728,11 +879,13 @@ The reversal is itself logged as a new event, maintaining the full audit trail.`
   {
     id: 'compendium',
     title: 'The Compendium',
-    category: 'dm',
+    category: 'ai-homebrew',
     icon: Globe,
     content: `# The Compendium & Homebrew Manager
 
 The Compendium is your unified interface for browsing official 5e content and managing homebrew entities. Open it from the **Compendium** button in the DM Dashboard header (amber book icon) or from the sidebar.
+
+> **Where to go:** \`Sidebar -> Compendium\` or \`DM Dashboard -> Compendium button\`
 
 ## Split-Pane Layout
 
@@ -784,7 +937,7 @@ On any monster stat block (SRD or homebrew), click **Add to Combat** to:
   {
     id: 'voice-chat',
     title: 'Voice Chat',
-    category: 'player',
+    category: 'player-tasks',
     icon: Mic,
     content: `# Voice Chat
 
@@ -823,7 +976,7 @@ If you join voice but cannot hear others:
   {
     id: 'companion-view',
     title: 'Player Companion View',
-    category: 'player',
+    category: 'player-tasks',
     icon: Smartphone,
     content: `# Player Companion View
 
@@ -871,7 +1024,12 @@ Tap any weapon in the **Quick Attacks** panel to instantly roll both attack and 
 Spell slot pips show how many slots remain at each level. These update live when the DM processes spells or when you take a rest.
 
 ### Dice Roller
-Tap **Dice Roller** at the bottom to expand a full dice roller. Supports all die types with a **Private/Public** toggle — private rolls appear only in the DM's feed, not the party stream.
+Tap **Dice Roller** at the bottom to expand a full dice roller. It supports public, private, secret, and super-secret roll visibility:
+
+- **Public**: the whole table sees the result.
+- **Private**: you and the DM see the result.
+- **Secret**: only the DM sees the result; you receive a masked acknowledgement.
+- **Super-secret**: only the DM sees the result, with no local acknowledgement.
 
 ## Live Sync
 
@@ -882,7 +1040,7 @@ The companion view connects to the same server socket as the main app. All chang
   {
     id: 'world-quests',
     title: 'World Map & Quests',
-    category: 'player',
+    category: 'player-tasks',
     icon: Compass,
     content: `# World Map & Quests
 
@@ -915,7 +1073,7 @@ The **Quest Tracker** is visible to all players and managed by the DM:
   {
     id: 'dm-prep-tools',
     title: 'DM Prep & Session Tools',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: ClipboardList,
     content: `# DM Prep & Session Tools
 
@@ -976,15 +1134,24 @@ The **Soundboard** card in the DM Dashboard provides atmospheric audio:
   {
     id: 'effect-timeline',
     title: 'Effect Timeline & Audit Trail',
-    category: 'dm',
+    category: 'core-mechanics',
     icon: Scroll,
     content: `# Effect Timeline & Audit Trail
 
-Arcane Ally maintains a comprehensive, immutable record of every game event. This serves as both a reference during play and a historical record of the campaign.
+The Effect Timeline is the table's receipt book. It shows what changed, who was affected, and whether anything was later undone.
 
 ## Effect Timeline
 
-The **Effect Timeline** card in the DM Dashboard's right column shows events grouped by combat round:
+> **Where to go:** \`Sidebar -> DM Dashboard -> right column -> Effect Timeline\`
+
+Use it when someone asks:
+
+- "How much damage did that fireball do?"
+- "Who is still poisoned?"
+- "Did we already undo that mistake?"
+- "What happened this round?"
+
+The timeline groups events by combat round:
 
 - **DMG** (red) — who dealt how much of what damage type to whom
 - **HEAL** (green) — restoration amounts
@@ -992,7 +1159,7 @@ The **Effect Timeline** card in the DM Dashboard's right column shows events gro
 - **BUFF** (blue) — buff applications and removals
 - **CON✓ / CONC!** (violet/rose) — concentration check results
 - **AUTO** (orange) — automated aura or turn-trigger effects
-- **UNDO** (slate) — reversal records
+- **UNDO** (slate) — corrections
 
 Each event type has a distinct color badge. Use the legend at the top to filter by type — click a badge to show only those events.
 
@@ -1004,7 +1171,7 @@ When the DM applies an **Area of Effect** (multi-target) effect, all events from
 - Total damage dealt (if applicable)
 - An expand/collapse chevron to show/hide the individual per-target events
 
-The DM can **undo the entire group at once** using the ↩ button on the group header. This reverses all events in the batch atomically — no need to undo each target one by one.
+The DM can **undo the entire group at once** using the curved undo button on the group header. This corrects every target in that AoE at the same time.
 
 ## Per-Event Undo (DM only)
 
@@ -1013,7 +1180,7 @@ Individual events also have a per-event ↩ undo button. Clicking it:
 2. Creates a new **UNDO** record in the timeline
 3. Marks the original event as reversed (shown with strikethrough + 40% opacity)
 
-> **Tip:** Reversal is for correcting mistakes, not time travel. The original event stays in the log, marked as reversed, preserving the full audit trail.
+> **Tip:** Undo does not erase history. It adds a correction and marks the original event as reversed, so the table can still see what happened.
 
 ## Exporting the Combat Log
 
@@ -1038,7 +1205,7 @@ The **Audit Log** (in the DM Dashboard) provides human-readable descriptions of 
   {
     id: 'ai-features',
     title: 'AI Features Overview',
-    category: 'getting-started',
+    category: 'ai-homebrew',
     icon: Sparkles,
     content: `# AI Features Overview
 
@@ -1095,18 +1262,23 @@ OLLAMA_URL=http://your-ollama-host:11434
   {
     id: 'modifier-trace',
     title: 'Modifier Trace Overlay',
-    category: 'player',
+    category: 'core-mechanics',
     icon: Sparkles,
     content: `# Modifier Trace Overlay
     
 Arcane Ally calculates all of your character sheet statistics in real-time, tracing every active item, passive ability, temporary buff, and environmental condition to its exact source.
 
 ## Hoverable Stat Provenance
-Hover or tap any primary statistic on your Character Sheet (such as Ability Scores, Armor Class, Speed, Initiative, Saving Throws, and Skills) to view a detailed popover overlay:
+
+> **Where to go:** \`Character Sheet -> hover or tap AC, ability scores, saves, skills, speed, or initiative\`
+
+Use Modifier Trace when a number surprises you. Hover or tap a primary statistic to see why it has that value:
 - **Base Score**: The un-modified attribute score of your character.
 - **Active Equipment**: Flat bonuses, armor changes, or modifiers granted by currently equipped weapons, shields, and accessories.
 - **Temporary Effects**: Dynamic bonuses applied to your character by the DM (such as the *Bless* spell, *Haste*, or homebrew active effects).
 - **Environmental Conditions**: Reductions, disadvantages, advantage flags, or automatic failure overrides caused by current conditions (e.g. *Grappled*, *Paralyzed*, or *Exhausted*).
+
+If the number looks wrong, check the trace before editing the character. Most surprises come from equipped items, active buffs, or conditions.
 
 ## Real-Time Updates
 Whenever the DM grants you a new dynamic buff, drops a condition on you, or you claim and equip a magic item from the Shared Loot Pool, the calculations are recalculated atomically. Every tooltip update happens instantaneously with absolutely zero page refreshes required.
@@ -1124,7 +1296,7 @@ These tags animate automatically via CSS \`@keyframes\` and fade out after 2.5 s
   {
     id: 'combat-recovery',
     title: 'Combat Recovery & Snapshots',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: History,
     content: `# Combat Recovery & Snapshots
 
@@ -1156,7 +1328,7 @@ If you are self-hosting Arcane Ally, you maintain full control over your data. Y
   {
     id: 'effect-presets',
     title: 'Effect Preset Library',
-    category: 'dm',
+    category: 'dm-tasks',
     icon: Zap,
     content: `# Effect Preset Library
 
@@ -1164,7 +1336,7 @@ Managing active spells, conditions, and temporary modifiers in combat can be ted
 
 ## Default Templates
 The application comes pre-seeded with standard 5e effects, including:
-- **Bless**: Grants +2.5 Wisconsin/Dexterity/Charisma saving throw modifiers.
+- **Bless**: Adds the Bless-style bonus to attacks and saving throws.
 - **Haste**: Grants +2 AC, double speed, and advantage on Dexterity saves.
 - **Shield of Faith**: Grants +2 AC.
 - **Frightened**: Applies the Frightened condition.
@@ -1189,7 +1361,7 @@ To apply a preset to multiple combatants concurrently:
   {
     id: 'import-guardrails',
     title: 'Import Guardrails & Safety Diffs',
-    category: 'dm',
+    category: 'core-mechanics',
     icon: Shield,
     content: `# Import Guardrails & Safety Diffs
 
@@ -1214,14 +1386,80 @@ To resolve pending imports:
 3. Review the comparative stats (e.g., \`Level: 4 ➔ 5\`, \`Max HP: 32 ➔ 40\`) alongside the safety flag reasons.
 4. Click **Approve Sync** to commit the changes and initialise session states, or **Discard** to reject the incoming sync and keep the existing sheet.`,
   },
+  {
+    id: 'common-problems',
+    title: 'Common Problems & Fixes',
+    category: 'troubleshooting',
+    icon: HelpCircle,
+    content: `# Common Problems & Fixes
+
+Use this section when something does not behave the way you expected.
+
+## D&D Beyond Import Fails
+
+> **Where to go:** \`D&D Beyond character sheet -> privacy settings\`
+
+- Make sure the D&D Beyond sheet is set to **Public**.
+- Copy the full character URL, not just the character ID.
+- If the import is still wrong, use PDF import or Manual Creation as a fallback.
+
+## AI Features Do Not Respond
+
+> **Where to go:** \`Host/Admin -> Self-Hosting & Deployment -> OLLAMA_URL\`
+
+- Confirm Ollama is running.
+- Confirm \`OLLAMA_URL\` points to the correct host and port.
+- The rest of Arcane Ally still works if AI is unavailable.
+
+## Voice Chat Does Not Ask for Microphone Access
+
+> **Where to go:** \`Browser address bar -> site permissions\`
+
+- Voice works on \`localhost\` without HTTPS.
+- For LAN or remote IP addresses, browsers usually require **HTTPS**.
+- If you blocked the microphone once, reset site permissions in the browser.
+
+## A Player Cannot Claim Loot or Affect Another Character
+
+> **Where to go:** \`DM Dashboard -> Access Control\`
+
+- The DM may have permissions set to **Approval**, **Owner Only**, or **DM Only**.
+- Check the DM approval queue for pending requests.
+- DM actions always bypass player permission limits.
+
+## A Number Looks Wrong
+
+> **Where to go:** \`Character Sheet -> hover/tap the stat -> Modifier Trace\`
+
+- Check active equipment.
+- Check active buffs.
+- Check conditions.
+- Check whether duplicate items or disabled gear are being suppressed.
+
+## A Mistake Happened in Combat
+
+> **Where to go:** \`DM Dashboard -> Effect Timeline or Audit Log\`
+
+- Find the mistaken event.
+- Click the undo button.
+- The original event remains visible, but Arcane Ally records the correction.
+
+## A Secret Roll Did Not Show the Player a Number
+
+That is expected. Secret and super-secret rolls are intentionally resolved on the server and routed to the DM. Use **Private** if the player should also see the full result.`,
+  },
 ];
 
 // ── Category metadata ────────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { key: 'getting-started' as const, label: 'Getting Started', icon: BookOpen, color: 'text-primary' },
-  { key: 'player' as const, label: 'Player Guide', icon: Shield, color: 'text-health' },
-  { key: 'dm' as const, label: 'DM Guide', icon: Eye, color: 'text-red-400' },
+  { key: 'start-here' as const, label: 'Start Here', icon: BookOpen, color: 'text-primary' },
+  { key: 'player-tasks' as const, label: 'Player Tasks', icon: Shield, color: 'text-health' },
+  { key: 'dm-tasks' as const, label: 'DM Tasks', icon: Eye, color: 'text-red-400' },
+  { key: 'core-mechanics' as const, label: 'Core Mechanics', icon: Zap, color: 'text-amber-400' },
+  { key: 'ai-homebrew' as const, label: 'AI & Homebrew', icon: Sparkles, color: 'text-violet-400' },
+  { key: 'host-admin' as const, label: 'Host/Admin', icon: Globe, color: 'text-blue-400' },
+  { key: 'troubleshooting' as const, label: 'Troubleshooting', icon: HelpCircle, color: 'text-orange-400' },
 ];
 
 // ── Simple Markdown-ish renderer ─────────────────────────────────────────
@@ -1233,6 +1471,9 @@ function renderMarkdown(md: string) {
   let bqLines: string[] = [];
   let inList = false;
   let listItems: string[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let tableRows: string[][] = [];
 
   const flushBlockquote = () => {
     if (bqLines.length > 0) {
@@ -1267,16 +1508,92 @@ function renderMarkdown(md: string) {
     inList = false;
   };
 
+  const flushCodeBlock = () => {
+    if (codeLines.length > 0) {
+      elements.push(
+        <pre key={`code-${elements.length}`} className="my-3 overflow-x-auto rounded-md border border-border/40 bg-background/80 p-3 text-xs leading-relaxed text-primary/90">
+          <code>{codeLines.join('\n')}</code>
+        </pre>
+      );
+      codeLines = [];
+    }
+    inCodeBlock = false;
+  };
+
+  const flushTable = () => {
+    if (tableRows.length > 0) {
+      const [header, ...body] = tableRows;
+      elements.push(
+        <div key={`table-${elements.length}`} className="my-4 overflow-x-auto rounded-md border border-border/40">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/50">
+              <tr>
+                {header.map((cell, i) => (
+                  <th key={i} className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-primary/80">
+                    {renderInline(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            {body.length > 0 && (
+              <tbody className="divide-y divide-border/30">
+                {body.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, cellIndex) => (
+                      <td key={cellIndex} className="px-3 py-2 align-top text-foreground/75">
+                        {renderInline(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            )}
+          </table>
+        </div>
+      );
+      tableRows = [];
+    }
+  };
+
   for (const line of lines) {
     const trimmed = line.trimEnd();
 
+    // Fenced code blocks
+    if (trimmed.startsWith('```')) {
+      if (inCodeBlock) {
+        flushCodeBlock();
+      } else {
+        flushBlockquote();
+        flushList();
+        flushTable();
+        inCodeBlock = true;
+      }
+      continue;
+    }
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
     // Blockquotes
     if (trimmed.startsWith('> ')) {
-      if (!inBlockquote) { flushList(); inBlockquote = true; }
+      if (!inBlockquote) { flushList(); flushTable(); inBlockquote = true; }
       bqLines.push(trimmed.slice(2));
       continue;
     }
     if (inBlockquote) flushBlockquote();
+
+    // Tables
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.split('|').slice(1, -1).map(cell => cell.trim());
+      const isSeparator = cells.every(cell => /^:?-{3,}:?$/.test(cell));
+      if (!isSeparator) {
+        flushList();
+        tableRows.push(cells);
+      }
+      continue;
+    }
+    if (tableRows.length > 0) flushTable();
 
     // Unordered list items
     if (/^[-*]\s/.test(trimmed) || /^\d+\.\s/.test(trimmed)) {
@@ -1334,6 +1651,8 @@ function renderMarkdown(md: string) {
   // Flush remaining
   if (inBlockquote) flushBlockquote();
   if (inList) flushList();
+  if (inCodeBlock) flushCodeBlock();
+  if (tableRows.length > 0) flushTable();
 
   return <>{elements}</>;
 }
@@ -1481,7 +1800,7 @@ export default function AppGuidebook() {
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border/20 text-center">
           <p className="text-[9px] text-muted-foreground/30 font-display tracking-widest uppercase">
-            Arcane Ally v1.0.1
+            Arcane Ally v1.0.2
           </p>
         </div>
       </aside>

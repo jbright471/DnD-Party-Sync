@@ -4,6 +4,15 @@ import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { Dices, AlertTriangle, ChevronUp, ChevronDown, Ban } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import type { RollVisibility } from '../types/effects';
+
+const ROLL_VISIBILITY_KEY = 'arcane_roll_visibility';
+
+function getStoredRollVisibility(): RollVisibility {
+  if (typeof window === 'undefined') return 'public';
+  const stored = window.localStorage.getItem(ROLL_VISIBILITY_KEY) as RollVisibility | null;
+  return stored && ['public', 'private', 'secret', 'super_secret'].includes(stored) ? stored : 'public';
+}
 
 export interface StatRollResult {
   rollType: string;
@@ -61,6 +70,7 @@ export function RollableStat({
     autoFails?: string[];
   };
 }) {
+  const characterName = character.name || 'Someone';
   // Resolve effective proficiency from either prop
   const effectiveProfLevel: ProficiencyLevel | 'none' =
     proficiencyLevel ?? (proficient ? 'proficiency' : 'none');
@@ -89,6 +99,9 @@ export function RollableStat({
   }
 
   const handleClick = () => {
+    const rollVisibility = getStoredRollVisibility();
+    const isHiddenRoll = rollVisibility === 'secret' || rollVisibility === 'super_secret';
+
     // Auto-fail: emit a 0 total with explanation
     if (modObj?.autoFail) {
       const reason = modObj.reasons.join('; ');
@@ -101,13 +114,22 @@ export function RollableStat({
         rolls: [0],
         label,
         rollType,
-        conditionFlags: { autoFail: true, reasons: mod.reasons },
+        rollVisibility,
+        isPrivate: rollVisibility !== 'public',
+        conditionFlags: { autoFail: true, reasons: modObj.reasons },
       });
-      toast.error(`Auto-Fail: ${label}`, {
-        description: reason,
-        duration: 4000,
-      });
-      onRoll?.({ rollType, label, modifier, roll: 0, total: 0 });
+      if (isHiddenRoll) {
+        toast.message('Fate sealed', {
+          description: `${label} result sent to the DM.`,
+          duration: 3000,
+        });
+      } else {
+        toast.error(`Auto-Fail: ${label}`, {
+          description: reason,
+          duration: 4000,
+        });
+        onRoll?.({ rollType, label, modifier, roll: 0, total: 0 });
+      }
       return;
     }
 
@@ -137,6 +159,29 @@ export function RollableStat({
       ? ` (${isAdvantage ? 'Advantage' : 'Disadvantage'}: ${modObj.reasons.map((r: string) => r.split(':')[0]).join(', ')})`
       : '';
 
+    if (isHiddenRoll) {
+      socket.emit('server_dice_roll', {
+        actor: characterName,
+        sides: 20,
+        modifier,
+        label: `${label}${reasonTag}`,
+        rollType,
+        ability,
+        rollMode: isAdvantage ? 'advantage' : isDisadvantage ? 'disadvantage' : 'straight',
+        rollVisibility,
+        conditionFlags: modObj?.reasons?.length > 0
+          ? { advantage: modObj.advantage, reasons: modObj.reasons }
+          : undefined,
+      });
+      if (rollVisibility === 'super_secret') {
+        toast.message('Roll sent to the DM', {
+          description: `${rollType}: ${label}`,
+          duration: 3000,
+        });
+      }
+      return;
+    }
+
     socket.emit('dice_roll', {
       actor: characterName,
       sides: 20,
@@ -146,6 +191,8 @@ export function RollableStat({
       rolls: isAdvantage || isDisadvantage ? [all[0], all[1]] : [chosen],
       label: `${label}${reasonTag}`,
       rollType,
+      rollVisibility,
+      isPrivate: rollVisibility === 'private',
       conditionFlags: modObj?.reasons?.length > 0
         ? { advantage: modObj.advantage, reasons: modObj.reasons }
         : undefined,

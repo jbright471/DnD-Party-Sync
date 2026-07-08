@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { useGame } from '../context/GameContext';
 import socket from '../socket';
+import type { RollVisibility } from '../types/effects';
 
 const CONDITIONS = [
   'Blinded','Charmed','Deafened','Exhaustion','Frightened','Grappled',
@@ -177,6 +178,7 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
   const [showSaveRequest, setShowSaveRequest] = useState(false);
   const [saveDc, setSaveDc] = useState(15);
   const [saveAbility, setSaveAbility] = useState('wis');
+  const [saveRollVisibility, setSaveRollVisibility] = useState<RollVisibility>('public');
   const [saveTargets, setSaveTargets] = useState<Set<number>>(new Set());
   const [saveOnFailEffects, setSaveOnFailEffects] = useState<EffectDef[]>([{ type: 'condition', condition: 'Poisoned' }]);
 
@@ -252,6 +254,7 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
       ability: saveAbility,
       onFailEffects: saveOnFailEffects,
       onPassEffects: [],
+      rollVisibility: saveRollVisibility,
     });
     toast.success(`DC ${saveDc} ${saveAbility.toUpperCase()} save requested from ${saveTargets.size} character(s).`);
     setSaveTargets(new Set());
@@ -461,6 +464,20 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                         onChange={e => setSaveDc(parseInt(e.target.value) || 15)}
                         className="h-7 text-xs mt-0.5 bg-background/50" />
                     </div>
+                  </div>
+                  <div>
+                    <Label className="text-[10px]">Visibility</Label>
+                    <Select value={saveRollVisibility} onValueChange={value => setSaveRollVisibility(value as RollVisibility)}>
+                      <SelectTrigger className="h-7 text-xs mt-0.5 bg-background/50">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="public" className="text-xs">Public</SelectItem>
+                        <SelectItem value="private" className="text-xs">Private</SelectItem>
+                        <SelectItem value="secret" className="text-xs">Secret</SelectItem>
+                        <SelectItem value="super_secret" className="text-xs">Super Secret</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div>
                     <Label className="text-[10px]">Target Characters</Label>

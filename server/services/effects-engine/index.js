@@ -16,7 +16,10 @@ const {
     applyConditionEvent,
     removeConditionEvent,
     applyBuffEvent,
+    getCharacterData,
 } = require('../../lib/rulesIntegration');
+
+const REACTION_DEPTH_LIMIT = 2;
 
 // ─── Target resolution ────────────────────────────────────────────────────────
 
@@ -121,6 +124,67 @@ function writeEventRecord(db, { sessionRound, turnIndex, phase, eventType, actor
     ).lastInsertRowid;
 }
 
+function getReactiveHealingSources(db, sourceCharacterId) {
+    if (!sourceCharacterId) return [];
+    const source = getCharacterData(db, sourceCharacterId);
+    if (!source) return [];
+
+    const inventory = [...(source.inventory || []), ...(source.homebrewInventory || [])];
+    return inventory.filter(item => {
+        if (item.equipped === false) return false;
+        const handlers = Array.isArray(item.reactiveHandlers) ? item.reactiveHandlers : [];
+        return handlers.includes('retributive_healing');
+    }).map(item => ({
+        characterId: source.id,
+        characterName: source.name,
+        itemName: item.name || 'Retributive Healing',
+    }));
+}
+
+function applyReactiveHealing(db, { effect, result, target, eventId, records, sessionRound, turnIndex, groupId, depth }) {
+    if (!eventId || effect.type !== 'heal' || target.type !== 'character') return;
+    if (!effect.sourceCharacterId || effect.sourceCharacterId === target.id) return;
+    if ((depth || 0) >= REACTION_DEPTH_LIMIT) return;
+    if (!result.healed || result.healed <= 0) return;
+
+    const sources = getReactiveHealingSources(db, effect.sourceCharacterId);
+    for (const source of sources) {
+        const reaction = applyHealEvent(db, source.characterId, result.healed);
+        if (!reaction.success) continue;
+
+        const reactionPayload = {
+            type: 'heal',
+            value: reaction.healed,
+            source: 'retributive_healing',
+            sourceCharacterId: source.characterId,
+            triggeredByEventId: eventId,
+            depth: (depth || 0) + 1,
+        };
+        const reactionEventId = writeEventRecord(db, {
+            sessionRound, turnIndex, phase: 'reaction', eventType: 'reaction_heal',
+            actor: `Reaction: ${source.itemName}`,
+            target: { id: source.characterId, type: 'character', name: source.characterName },
+            payloadJson: JSON.stringify(reactionPayload),
+            parentEventId: eventId,
+            sourcePresetId: null,
+            requestId: effect.requestId ? `${effect.requestId}:reaction:${source.characterId}:${eventId}` : null,
+            description: `${source.characterName} recovered ${reaction.healed} HP from ${source.itemName}.`,
+            groupId: groupId || null,
+        });
+
+        if (reactionEventId) {
+            records.push({
+                targetId: source.characterId,
+                targetName: source.characterName,
+                eventType: 'reaction_heal',
+                logMessage: reaction.logMessage,
+                success: true,
+                parentEventId: eventId,
+            });
+        }
+    }
+}
+
 /**
  * Write an audit event from a manual socket handler (not effectEngine automation).
  * Returns the event ID, or null if the requestId was already processed (idempotent skip).
@@ -206,9 +270,10 @@ function reverseEvent(db, eventId, actor, applyDamageEvent, applyHealEvent, appl
  * Apply an array of effects to an array of resolved targets, inside a transaction.
  * Returns an array of { targetId, targetName, eventType, logMessage, success } records.
  */
-function applyPartyEffect(db, effects, targetsSpec, actor, sessionRound, turnIndex, phase, sourcePresetId, groupId) {
+function applyPartyEffect(db, effects, targetsSpec, actor, sessionRound, turnIndex, phase, sourcePresetId, groupId, options = {}) {
     const targets = resolveTargets(db, targetsSpec);
     const records = [];
+    const depth = options.depth || 0;
 
     db.transaction(() => {
         for (const target of targets) {
@@ -224,7 +289,7 @@ function applyPartyEffect(db, effects, targetsSpec, actor, sessionRound, turnInd
                     : applyToMonster(db, target.id, effect);
 
                 if (result.success) {
-                    writeEventRecord(db, {
+                    const eventId = writeEventRecord(db, {
                         sessionRound, turnIndex, phase, eventType, actor,
                         target,
                         payloadJson: JSON.stringify(effect),
@@ -232,6 +297,7 @@ function applyPartyEffect(db, effects, targetsSpec, actor, sessionRound, turnInd
                         sourcePresetId,
                         groupId: groupId || null,
                     });
+                    applyReactiveHealing(db, { effect, result, target, eventId, records, sessionRound, turnIndex, phase, groupId, depth });
                 }
 
                 records.push({

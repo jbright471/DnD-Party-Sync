@@ -31,7 +31,7 @@ const FILTERS: { key: string; label: string; color: string; bg: string; types: s
 const MAX_FEED_SIZE = 100;
 
 function getFilterKey(event: RollFeedEvent): string {
-  if (event.isPrivate) return 'priv';
+  if ((event.rollVisibility ?? (event.isPrivate ? 'private' : 'public')) !== 'public') return 'priv';
   const filter = FILTERS.find(f => f.types.includes(event.rollType));
   return filter?.key ?? 'other';
 }
@@ -160,6 +160,7 @@ export function DMRollFeed({ maxHeight = 320 }: DMRollFeedProps) {
           <div className="space-y-0.5 pr-1">
             {enriched.map(event => {
               const meta = getRollTypeMeta(event.rollType);
+              const visibility = event.rollVisibility ?? (event.isPrivate ? 'private' : 'public');
               const breakdown = formatRollBreakdown(event);
               const isCrit = event.rollType === 'Critical Damage';
               const isNat20 = event.sides === 20 && event.total - event.modifier === 20;
@@ -174,8 +175,8 @@ export function DMRollFeed({ maxHeight = 320 }: DMRollFeedProps) {
                         {getInitials(event.actor)}
                       </div>
                       <span className="text-[10px] font-semibold text-foreground/80">{event.actor}</span>
-                      {event.isPrivate && (
-                        <Lock className="h-2.5 w-2.5 text-fuchsia-400" title="Private roll" />
+                      {visibility !== 'public' && (
+                        <Lock className="h-2.5 w-2.5 text-fuchsia-400" title={`${visibility.replace('_', ' ')} roll`} />
                       )}
                       <span className="text-[8px] text-muted-foreground/30 ml-auto">
                         {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}

@@ -236,6 +236,10 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
       state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
     }
 
+    if (state.currentHp === 0 && !state.activeConditions.includes('unconscious')) {
+      state.activeConditions = [...state.activeConditions, 'unconscious'];
+    }
+
     saveSessionState(db, state);
 
     let logMsg = `${char.name} took ${damageResult.damageDealt} ${damageType} damage`;
@@ -266,6 +270,10 @@ function applyHealEvent(db, characterId, amount) {
 
     const result = resolveHeal({ currentHp: state.currentHp, tempHp: state.tempHp, maxHp: char.baseMaxHp }, amount);
     state.currentHp = result.newCurrentHp;
+    if (state.currentHp > 0 && state.activeConditions.includes('unconscious')) {
+      state.activeConditions = state.activeConditions.filter(condition => condition !== 'unconscious');
+      delete state.conditionDurations.unconscious;
+    }
     saveSessionState(db, state);
     return { success: true, newHp: state.currentHp, healed: result.healed, logMessage: `${char.name} was healed for ${result.healed} HP. HP: ${state.currentHp}/${char.baseMaxHp}` };
   });

@@ -1,16 +1,69 @@
-# React + Vite
+# Arcane Ally Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React/Vite frontend for Arcane Ally, the player and DM-facing tabletop companion UI.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- React 19 + TypeScript
+- Vite 7
+- Tailwind CSS v4
+- shadcn/ui + Radix UI primitives
+- Socket.io client for real-time party state
+- TanStack Query for server-backed data flows
 
-## React Compiler
+## Common Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev
+npm run lint
+npm run build
+```
 
-## Expanding the ESLint configuration
+The Vite dev server runs on `http://localhost:5173` by default. It expects the backend API and Socket.io gateway to be available on the server port, normally `3001`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## App Entry Points
+
+- `src/App.tsx` - route layout, socket toasts, pending save/secret roll listeners
+- `src/context/GameContext.tsx` - shared party state normalization and resource permissions
+- `src/pages/CharacterSheet.tsx` - primary character sheet experience
+- `src/pages/DmDashboard.tsx` - DM command center
+- `src/pages/AppGuidebook.tsx` - in-app documentation hub
+- `src/components/DiceRoller.tsx` - global/embedded dice tray with visibility controls
+- `src/components/RollableStat.tsx` - clickable ability, save, skill, and initiative rolls
+- `src/components/DMRollFeed.tsx` - DM roll stream with non-public visibility grouping
+- `src/components/DmAutomationPanel.tsx` - DM automation tools, including save requests
+
+## Roll Visibility
+
+The client supports four roll modes:
+
+| Mode | Who sees the full result? | Player feedback |
+|---|---|---|
+| Public | Everyone | Full result |
+| Private | DM and rolling player | Full result |
+| Secret | DM only | Masked "Fate sealed" acknowledgement |
+| Super-secret | DM only | No acknowledgement |
+
+Secret and super-secret rolls use the `server_dice_roll` socket event so the result is generated on the backend and never exposed in the browser before routing.
+
+## Mobile Builds
+
+Capacitor helpers are available for future mobile packaging:
+
+```bash
+npm run build:mobile
+npm run cap:sync
+npm run cap:android
+npm run cap:ios
+```
+
+## Validation
+
+Before publishing frontend changes, run:
+
+```bash
+npm run lint
+npm run build
+npm audit --audit-level=high
+```
