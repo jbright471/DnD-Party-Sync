@@ -18,6 +18,7 @@ const {
     applyBuffEvent,
     getCharacterData,
 } = require('../../lib/rulesIntegration');
+const { getAutomationRules } = require('../../lib/automationRules');
 
 const REACTION_DEPTH_LIMIT = 2;
 
@@ -109,10 +110,11 @@ function writeEventRecord(db, { sessionRound, turnIndex, phase, eventType, actor
         if (exists) return null;
     }
 
+    const combatSession = getActiveCombatSession(db);
     return db.prepare(`
         INSERT INTO effect_events
-            (session_round, turn_index, phase, event_type, actor, target_id, target_type, target_name, payload_json, parent_event_id, source_preset_id, request_id, description, group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (session_round, turn_index, phase, event_type, actor, target_id, target_type, target_name, payload_json, parent_event_id, source_preset_id, request_id, description, group_id, combat_session_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         sessionRound || 0, turnIndex || 0, phase || 'action',
         eventType, actor,
@@ -120,7 +122,8 @@ function writeEventRecord(db, { sessionRound, turnIndex, phase, eventType, actor
         payloadJson,
         parentEventId || null, sourcePresetId || null,
         requestId || null, description || null,
-        groupId || null
+        groupId || null,
+        combatSession?.id || null
     ).lastInsertRowid;
 }
 
@@ -142,6 +145,7 @@ function getReactiveHealingSources(db, sourceCharacterId) {
 }
 
 function applyReactiveHealing(db, { effect, result, target, eventId, records, sessionRound, turnIndex, groupId, depth }) {
+    if (!getAutomationRules(db).reactiveHandlers) return;
     if (!eventId || effect.type !== 'heal' || target.type !== 'character') return;
     if (!effect.sourceCharacterId || effect.sourceCharacterId === target.id) return;
     if ((depth || 0) >= REACTION_DEPTH_LIMIT) return;
@@ -211,8 +215,16 @@ function writeAuditEvent(db, { sessionRound, turnIndex, eventType, actor, target
  * Marks the original as reversed and writes a new reversal event.
  */
 function reverseEvent(db, eventId, actor, applyDamageEvent, applyHealEvent, applyConditionEvent, removeConditionEvent) {
-    const original = db.prepare('SELECT * FROM effect_events WHERE id = ?').get(eventId);
+    const original = db.prepare(`
+        SELECT ee.*, cs.status AS combat_session_status
+        FROM effect_events ee
+        LEFT JOIN combat_sessions cs ON cs.id = ee.combat_session_id
+        WHERE ee.id = ?
+    `).get(eventId);
     if (!original || original.is_reversed) return { success: false, error: 'Event not found or already reversed' };
+    if (original.combat_session_status === 'archived') {
+        return { success: false, error: 'Archived combat events are read-only' };
+    }
 
     const payload = JSON.parse(original.payload_json || '{}');
     let inverseType, inversePayload, inverseDesc;
@@ -365,6 +377,7 @@ function previewPartyEffect(db, effects, targetsSpec) {
  * Called from server.js on the `next_turn` socket event.
  */
 function processTurnTriggers(db, phase, activeEntityId, sessionRound, turnIndex) {
+    if (!getAutomationRules(db).turnTriggers) return [];
     const presets = db.prepare(`
         SELECT * FROM automation_presets
         WHERE preset_type = 'turn_trigger'
@@ -401,6 +414,7 @@ function processTurnTriggers(db, phase, activeEntityId, sessionRound, turnIndex)
  * Auras apply effects to their specified targets on each trigger.
  */
 function processAurasForTurn(db, activeEntityId, sessionRound, turnIndex, phase) {
+    if (!getAutomationRules(db).auras) return [];
     const auras = db.prepare(`
         SELECT * FROM automation_presets
         WHERE preset_type = 'aura'
@@ -424,19 +438,64 @@ function processAurasForTurn(db, activeEntityId, sessionRound, turnIndex, phase)
  * Retrieve the full effect timeline ordered by round → turn → id.
  * Optionally restricted to the last N events for performance.
  */
-function getCombatTimeline(db, limit = 200) {
+function getActiveCombatSession(db) {
+    return db.prepare("SELECT * FROM combat_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1").get();
+}
+
+function startCombatSession(db, { encounterId = null, name = 'Ad Hoc Encounter' } = {}) {
+    db.prepare("UPDATE combat_sessions SET status = 'archived', ended_at = COALESCE(ended_at, datetime('now')) WHERE status = 'active'").run();
+    const result = db.prepare(`
+        INSERT INTO combat_sessions (encounter_id, name, status)
+        VALUES (?, ?, 'active')
+    `).run(encounterId, name);
+    return db.prepare('SELECT * FROM combat_sessions WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function archiveActiveCombatSession(db, totalRounds = 0) {
+    const active = getActiveCombatSession(db);
+    if (!active) return null;
+    db.prepare(`
+        UPDATE combat_sessions
+        SET status = 'archived', ended_at = datetime('now'), total_rounds = ?
+        WHERE id = ?
+    `).run(totalRounds, active.id);
+    return db.prepare('SELECT * FROM combat_sessions WHERE id = ?').get(active.id);
+}
+
+function listCombatSessions(db, limit = 50) {
     return db.prepare(`
-        SELECT * FROM effect_events
-        ORDER BY session_round ASC, turn_index ASC, id ASC
+        SELECT cs.*, COUNT(ee.id) AS event_count
+        FROM combat_sessions cs
+        LEFT JOIN effect_events ee ON ee.combat_session_id = cs.id
+        GROUP BY cs.id
+        ORDER BY cs.started_at DESC, cs.id DESC
         LIMIT ?
     `).all(limit);
+}
+
+function getCombatTimeline(db, limit = 200, combatSessionId) {
+    const active = combatSessionId === undefined ? getActiveCombatSession(db) : null;
+    const selectedSessionId = combatSessionId === undefined ? active?.id : combatSessionId;
+    const where = selectedSessionId == null
+        ? 'combat_session_id IS NULL'
+        : 'combat_session_id = ?';
+    const params = selectedSessionId == null ? [limit] : [selectedSessionId, limit];
+    const rows = db.prepare(`
+        SELECT * FROM effect_events
+        WHERE ${where}
+        ORDER BY id DESC
+        LIMIT ?
+    `).all(...params);
+    return rows.reverse();
 }
 
 /**
  * Clear all effect events (called at start of new combat or by DM).
  */
 function clearTimeline(db) {
-    db.prepare('DELETE FROM effect_events').run();
+    const active = getActiveCombatSession(db);
+    if (active) return db.prepare('DELETE FROM effect_events WHERE combat_session_id = ?').run(active.id);
+    return db.prepare('DELETE FROM effect_events WHERE combat_session_id IS NULL').run();
 }
 
 /**
@@ -457,19 +516,24 @@ function writeConcentrationCheckEvent(db, characterId, characterName, spellName,
 /**
  * Retrieve the effect timeline with optional filters.
  */
-function getFilteredTimeline(db, { limit = 200, round, eventType, targetId } = {}) {
+function getFilteredTimeline(db, { limit = 200, round, eventType, targetId, combatSessionId, beforeId } = {}) {
     let where = [];
     let params = [];
     if (round !== undefined) { where.push('session_round = ?'); params.push(round); }
     if (eventType) { where.push('event_type = ?'); params.push(eventType); }
     if (targetId !== undefined) { where.push('target_id = ?'); params.push(targetId); }
+    if (combatSessionId !== undefined) {
+        if (combatSessionId === null) where.push('combat_session_id IS NULL');
+        else { where.push('combat_session_id = ?'); params.push(combatSessionId); }
+    }
+    if (beforeId !== undefined) { where.push('id < ?'); params.push(beforeId); }
 
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return db.prepare(`
         SELECT * FROM effect_events ${whereClause}
-        ORDER BY session_round ASC, turn_index ASC, id ASC
+        ORDER BY id DESC
         LIMIT ?
-    `).all(...params, limit);
+    `).all(...params, limit).reverse();
 }
 
 function getCharacterProvenance(db, characterId, limit = 100) {
@@ -492,4 +556,8 @@ module.exports = {
     applyToCharacter,
     applyToMonster,
     writeEventRecord,
+    getActiveCombatSession,
+    startCombatSession,
+    archiveActiveCombatSession,
+    listCombatSessions,
 };

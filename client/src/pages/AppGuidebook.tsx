@@ -818,11 +818,27 @@ Items saved to the Compendium can be dropped into the loot pool or assigned dire
 
 ## The Automation Panel
 
-Click **Automation** in the DM Dashboard header to open the automation configuration. This panel controls:
+Click **Automation** in the DM Dashboard header, then choose **Policies**. These campaign-wide settings save immediately and remain in effect after a restart.
 
-- **DM Approval Queue** — Toggle the master switch to require DM approval for player actions that affect shared state
-- **Effect Processing** — Configure automatic aura effects, turn triggers, and condition duration tracking
-- **Broadcast Throttling** — The timeline broadcast is debounced to 100ms to prevent spam during rapid multi-target effects
+### Character State
+
+- **Apply Unconscious at 0 HP** — adds Unconscious when damage reduces a character to 0 HP
+- **Clear Unconscious After Healing** — removes that condition when healing raises HP above 0
+- **Concentration Cleanup** — drops concentration and linked buffs at 0 HP
+
+### Combat Flow
+
+- **Concentration Checks** — choose **Automatic** for a server roll or **Prompt** for a table-resolved check
+- **Condition Duration Ticks** — reduces timed conditions when the affected turn begins
+- **Initiative Sync** — inserts party members when an encounter starts and accepts their initiative rolls
+
+### Automated Effects
+
+- **Turn Triggers** — enables configured start-of-turn and end-of-turn presets
+- **Aura Processing** — enables configured aura effects
+- **Reactive Item Handlers** — enables curated reactions such as Retributive Healing
+
+All policies are enabled by default so existing campaigns keep their current behavior after upgrading. Turning off a policy affects the next matching action; it does not reverse changes already applied.
 
 ## Access Control Matrix
 
@@ -1194,9 +1210,12 @@ This is ideal for session notes, Discord recaps, or archiving what actually happ
 
 ## Filtering the Timeline
 
+- **Encounter selector** — choose **Current timeline** or any completed encounter archive. Ending combat archives its events automatically instead of deleting them.
 - **Text filter** — type a character name, event type, or keyword to narrow down events
 - **Type badges** — click any badge (DMG, HEAL, COND, etc.) in the legend to filter to that type
 - Click the same badge again to clear the filter
+
+Archived timelines are read-only. You can search and export them, while undo and clear controls remain available only for the current timeline.
 
 ## Audit Log
 

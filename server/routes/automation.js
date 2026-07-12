@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { getAutomationRules, setAutomationRules } = require('../lib/automationRules');
 
 function serialize(v) {
     return typeof v === 'string' ? v : JSON.stringify(v);
@@ -11,6 +12,23 @@ router.get('/', (req, res) => {
     try {
         const presets = db.prepare('SELECT * FROM automation_presets ORDER BY preset_type ASC, created_at DESC').all();
         res.json(presets);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Campaign-wide behavior policies. Existing automation remains enabled by default.
+router.get('/rules', (_req, res) => {
+    try {
+        res.json(getAutomationRules(db));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.patch('/rules', (req, res) => {
+    try {
+        res.json(setAutomationRules(db, req.body));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

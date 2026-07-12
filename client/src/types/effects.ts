@@ -57,6 +57,7 @@ export interface EffectEvent {
   description: string | null;
   is_reversed: number;
   reversed_by_event_id: number | null;
+  combat_session_id: number | null;
   created_at: string;
 }
 

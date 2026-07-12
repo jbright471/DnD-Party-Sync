@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Zap, Plus, Trash2, Play, ToggleLeft, ToggleRight, Flame, Wind, Shield, Info, Lock, Unlock, Swords, ChevronDown, ChevronUp } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Zap, Plus, Trash2, Play, ToggleLeft, ToggleRight, Flame, Wind, Shield, Info, Lock, Unlock, Swords, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
@@ -62,6 +62,35 @@ interface Target {
 interface DmAutomationPanelProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface AutomationRules {
+  automaticUnconscious: boolean;
+  clearUnconsciousOnHeal: boolean;
+  concentrationCleanup: boolean;
+  concentrationChecks: 'automatic' | 'prompt';
+  conditionDurations: boolean;
+  turnTriggers: boolean;
+  auras: boolean;
+  reactiveHandlers: boolean;
+  initiativeSync: boolean;
+}
+
+function PolicyToggle({ checked, label, description, onChange }: {
+  checked: boolean;
+  label: string;
+  description: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 py-2.5 border-b border-border/30 last:border-0">
+      <div className="min-w-0 flex-1">
+        <Label className="text-xs font-semibold text-foreground">{label}</Label>
+        <p className="text-[10px] leading-snug text-muted-foreground mt-0.5">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+    </div>
+  );
 }
 
 // ── Effect row builder ──────────────────────────────────────────────────────
@@ -160,6 +189,7 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
   const enemies = state.initiativeState.filter(e => e.entity_type === 'monster');
 
   const [presets, setPresets] = useState<AutomationPreset[]>([]);
+  const [rules, setRules] = useState<AutomationRules | null>(null);
 
   // ── Group Strike state ──
   const [strikeEffects, setStrikeEffects] = useState<EffectDef[]>([{ type: 'damage', value: 10, damageType: 'fire' }]);
@@ -186,7 +216,35 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
     fetch('/api/automation').then(r => r.json()).then(setPresets).catch(() => {});
   }, []);
 
-  useEffect(() => { if (open) fetchPresets(); }, [open, fetchPresets]);
+  const fetchRules = useCallback(() => {
+    fetch('/api/automation/rules').then(r => r.json()).then(setRules).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      fetchPresets();
+      fetchRules();
+    }
+  }, [open, fetchPresets, fetchRules]);
+
+  const updateRules = async (patch: Partial<AutomationRules>) => {
+    if (!rules) return;
+    const previous = rules;
+    setRules({ ...rules, ...patch });
+    try {
+      const response = await fetch('/api/automation/rules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok) throw new Error('Unable to save automation policy');
+      setRules(await response.json());
+      toast.success('Automation policy saved.');
+    } catch {
+      setRules(previous);
+      toast.error('Could not save automation policy.');
+    }
+  };
 
   // ── Target helpers ──
 
@@ -339,13 +397,17 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
           <DialogTitle className="font-display flex items-center gap-2">
             <Zap className="h-5 w-5 text-primary" /> DM Automation Panel
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Configure group effects, saved macros, auras, and campaign automation policies.
+          </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="strike" className="flex-1 flex flex-col min-h-0">
-          <TabsList className="mx-6 mt-3 shrink-0">
-            <TabsTrigger value="strike" className="flex-1 text-xs"><Flame className="h-3 w-3 mr-1" />Group Strike</TabsTrigger>
-            <TabsTrigger value="macros" className="flex-1 text-xs"><Play className="h-3 w-3 mr-1" />Saved Macros</TabsTrigger>
-            <TabsTrigger value="auras" className="flex-1 text-xs"><Wind className="h-3 w-3 mr-1" />Aura Manager</TabsTrigger>
+          <TabsList className="mx-6 mt-3 shrink-0 grid grid-cols-4">
+            <TabsTrigger value="strike" className="text-xs"><Flame className="h-3 w-3 mr-1" />Strike</TabsTrigger>
+            <TabsTrigger value="macros" className="text-xs"><Play className="h-3 w-3 mr-1" />Macros</TabsTrigger>
+            <TabsTrigger value="auras" className="text-xs"><Wind className="h-3 w-3 mr-1" />Auras</TabsTrigger>
+            <TabsTrigger value="policies" className="text-xs"><SlidersHorizontal className="h-3 w-3 mr-1" />Policies</TabsTrigger>
           </TabsList>
 
           {/* ── Group Strike ──────────────────────────────────────────────── */}
@@ -751,6 +813,66 @@ export function DmAutomationPanel({ open, onClose }: DmAutomationPanelProps) {
                 </div>
               )}
             </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="policies" className="flex-1 min-h-0 px-6 py-4 overflow-auto">
+            {!rules ? (
+              <p className="py-10 text-center text-xs text-muted-foreground">Loading campaign policies…</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start gap-2 p-2.5 rounded border border-primary/20 bg-primary/5 text-[10px] text-muted-foreground">
+                  <Info className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                  These rules apply to the whole campaign. Changes save immediately and affect the next matching action.
+                </div>
+
+                <section>
+                  <h3 className="text-[10px] uppercase tracking-wider font-bold text-primary/80 mb-1">Character State</h3>
+                  <div className="border-y border-border/40">
+                    <PolicyToggle checked={rules.automaticUnconscious} onChange={value => updateRules({ automaticUnconscious: value })}
+                      label="Apply Unconscious at 0 HP" description="Adds Unconscious when a character is reduced to 0 HP." />
+                    <PolicyToggle checked={rules.clearUnconsciousOnHeal} onChange={value => updateRules({ clearUnconsciousOnHeal: value })}
+                      label="Clear Unconscious After Healing" description="Removes the automatic condition when HP rises above 0." />
+                    <PolicyToggle checked={rules.concentrationCleanup} onChange={value => updateRules({ concentrationCleanup: value })}
+                      label="Concentration Cleanup" description="Drops concentration and linked buffs when a character reaches 0 HP." />
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="text-[10px] uppercase tracking-wider font-bold text-primary/80 mb-1">Combat Flow</h3>
+                  <div className="border-y border-border/40">
+                    <div className="flex items-center gap-3 py-2.5 border-b border-border/30">
+                      <div className="min-w-0 flex-1">
+                        <Label className="text-xs font-semibold">Concentration Checks</Label>
+                        <p className="text-[10px] leading-snug text-muted-foreground mt-0.5">Roll automatically or ask the table to resolve each check.</p>
+                      </div>
+                      <Select value={rules.concentrationChecks} onValueChange={value => updateRules({ concentrationChecks: value as AutomationRules['concentrationChecks'] })}>
+                        <SelectTrigger aria-label="Concentration check handling" className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="automatic" className="text-xs">Automatic</SelectItem>
+                          <SelectItem value="prompt" className="text-xs">Prompt</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <PolicyToggle checked={rules.conditionDurations} onChange={value => updateRules({ conditionDurations: value })}
+                      label="Condition Duration Ticks" description="Reduces timed conditions at the start of the affected turn." />
+                    <PolicyToggle checked={rules.initiativeSync} onChange={value => updateRules({ initiativeSync: value })}
+                      label="Initiative Sync" description="Adds party members to encounters and updates initiative from their rolls." />
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="text-[10px] uppercase tracking-wider font-bold text-primary/80 mb-1">Automated Effects</h3>
+                  <div className="border-y border-border/40">
+                    <PolicyToggle checked={rules.turnTriggers} onChange={value => updateRules({ turnTriggers: value })}
+                      label="Turn Triggers" description="Runs enabled start-of-turn and end-of-turn presets." />
+                    <PolicyToggle checked={rules.auras} onChange={value => updateRules({ auras: value })}
+                      label="Aura Processing" description="Applies enabled aura effects during their configured phase." />
+                    <PolicyToggle checked={rules.reactiveHandlers} onChange={value => updateRules({ reactiveHandlers: value })}
+                      label="Reactive Item Handlers" description="Allows curated item reactions such as Retributive Healing." />
+                  </div>
+                </section>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </DialogContent>

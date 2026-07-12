@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Clock, Trash2, Download, ChevronDown, ChevronUp, Zap, RotateCcw } from 'lucide-react';
+import { Clock, Trash2, Download, ChevronDown, ChevronUp, Zap, RotateCcw, History } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
@@ -25,8 +25,23 @@ export interface EffectEvent {
   is_reversed: number;
   reversed_by_event_id: number | null;
   group_id: string | null;
+  combat_session_id: number | null;
   created_at: string;
 }
+
+interface CombatSession {
+  id: number;
+  encounter_id: number | null;
+  name: string;
+  status: 'active' | 'archived';
+  started_at: string;
+  ended_at: string | null;
+  total_rounds: number;
+  event_count: number;
+}
+
+const TIMELINE_PAGE_SIZE = 200;
+const EXPORT_PAGE_SIZE = 500;
 
 const REVERSIBLE_TYPES = new Set(['damage', 'heal', 'condition_applied', 'condition_removed']);
 
@@ -235,28 +250,50 @@ export function EffectTimeline() {
   const isDm = state.isDm;
 
   const [events, setEvents] = useState<EffectEvent[]>([]);
+  const [sessions, setSessions] = useState<CombatSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<'live' | number>('live');
+  const [hasEarlierEvents, setHasEarlierEvents] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState('');
   const [undoError, setUndoError] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const canModifyTimeline = isDm && selectedSessionId === 'live';
 
   useEffect(() => {
-    fetch('/api/effect-timeline')
+    const timelineUrl = selectedSessionId === 'live'
+      ? `/api/effect-timeline?limit=${TIMELINE_PAGE_SIZE}`
+      : `/api/effect-timeline?sessionId=${selectedSessionId}&limit=${TIMELINE_PAGE_SIZE}`;
+    fetch(timelineUrl)
       .then(r => r.json())
-      .then(setEvents)
+      .then((data: EffectEvent[]) => {
+        setEvents(data);
+        setHasEarlierEvents(data.length === TIMELINE_PAGE_SIZE);
+      })
       .catch(() => {});
 
-    socket.on('timeline_update', (data: EffectEvent[]) => setEvents(data));
+    fetch('/api/combat-sessions')
+      .then(r => r.json())
+      .then(setSessions)
+      .catch(() => {});
+
+    const onTimelineUpdate = (data: EffectEvent[]) => {
+      if (selectedSessionId === 'live') {
+        setEvents(data);
+        setHasEarlierEvents(data.length === TIMELINE_PAGE_SIZE);
+      }
+      fetch('/api/combat-sessions').then(r => r.json()).then(setSessions).catch(() => {});
+    };
+    socket.on('timeline_update', onTimelineUpdate);
     socket.on('rules_error', ({ message }: { message: string }) => {
       setUndoError(message);
       setTimeout(() => setUndoError(null), 3000);
     });
     return () => {
-      socket.off('timeline_update');
+      socket.off('timeline_update', onTimelineUpdate);
       socket.off('rules_error');
     };
-  }, []);
+  }, [selectedSessionId]);
 
   // Auto-scroll to bottom when new events arrive and panel is open
   useEffect(() => {
@@ -269,7 +306,9 @@ export function EffectTimeline() {
     ? events.filter(e =>
         (e.target_name?.toLowerCase().includes(filter.toLowerCase())) ||
         e.actor.toLowerCase().includes(filter.toLowerCase()) ||
-        e.event_type.includes(filter.toLowerCase())
+        e.event_type.includes(filter.toLowerCase()) ||
+        (e.description?.toLowerCase().includes(filter.toLowerCase())) ||
+        e.payload_json.toLowerCase().includes(filter.toLowerCase())
       )
     : events;
 
@@ -284,13 +323,38 @@ export function EffectTimeline() {
     });
   };
 
-  const handleClear = () => socket.emit('clear_effect_timeline');
+  const handleClear = () => {
+    if (confirm('Clear the current combat timeline? This cannot be undone.')) {
+      socket.emit('clear_effect_timeline');
+    }
+  };
+
+  const handleLoadEarlier = async () => {
+    if (events.length === 0) return;
+    const params = new URLSearchParams({ beforeId: String(events[0].id), limit: String(TIMELINE_PAGE_SIZE) });
+    if (selectedSessionId !== 'live') params.set('sessionId', String(selectedSessionId));
+    try {
+      const older: EffectEvent[] = await fetch(`/api/effect-timeline?${params}`).then(r => r.json());
+      setEvents(current => [...older, ...current]);
+      setHasEarlierEvents(older.length === TIMELINE_PAGE_SIZE);
+    } catch { /* keep the visible page */ }
+  };
 
   const handleExport = async () => {
     let allEvents: EffectEvent[] = events;
     try {
-      const res = await fetch('/api/effect-timeline');
-      allEvents = await res.json();
+      let exportedEvents: EffectEvent[] = [];
+      let beforeId: number | undefined;
+      let page: EffectEvent[];
+      do {
+        const params = new URLSearchParams({ limit: String(EXPORT_PAGE_SIZE) });
+        if (selectedSessionId !== 'live') params.set('sessionId', String(selectedSessionId));
+        if (beforeId !== undefined) params.set('beforeId', String(beforeId));
+        page = await fetch(`/api/effect-timeline?${params}`).then(r => r.json());
+        exportedEvents = [...page, ...exportedEvents];
+        beforeId = page[0]?.id;
+      } while (page.length === EXPORT_PAGE_SIZE && beforeId !== undefined);
+      allEvents = exportedEvents;
     } catch { /* use in-state events */ }
 
     const date = new Date().toISOString().slice(0, 10);
@@ -353,11 +417,30 @@ export function EffectTimeline() {
         <CardContent className="pt-0 space-y-2">
           {/* Controls */}
           <div className="flex items-center gap-2">
+            <div className="relative shrink-0">
+              <History className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+              <select
+                value={selectedSessionId}
+                onChange={event => setSelectedSessionId(event.target.value === 'live' ? 'live' : Number(event.target.value))}
+                aria-label="Choose combat timeline"
+                className="h-7 max-w-44 rounded-md border border-input bg-background/50 pl-7 pr-2 text-[10px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="live">Current timeline</option>
+                {sessions.filter(session => session.status === 'archived').map(session => (
+                  <option key={session.id} value={session.id}>
+                    {session.name} ({session.event_count})
+                  </option>
+                ))}
+              </select>
+            </div>
             <input
               type="text"
+              name="timeline-filter"
+              autoComplete="off"
+              aria-label="Filter combat timeline"
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Filter by character or type..."
+              placeholder="Search actor, target, spell, condition…"
               className="flex-1 h-7 rounded-md border border-input bg-background/50 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <Button
@@ -366,6 +449,7 @@ export function EffectTimeline() {
               className="h-7 px-2 text-[10px] text-muted-foreground hover:text-primary"
               onClick={handleExport}
               title="Export as markdown"
+              aria-label="Export timeline as Markdown"
             >
               <Download className="h-3 w-3" />
             </Button>
@@ -375,6 +459,8 @@ export function EffectTimeline() {
               className="h-7 px-2 text-[10px] text-muted-foreground hover:text-destructive"
               onClick={handleClear}
               title="Clear timeline"
+              aria-label="Clear current timeline"
+              disabled={selectedSessionId !== 'live'}
             >
               <Trash2 className="h-3 w-3" />
             </Button>
@@ -411,6 +497,11 @@ export function EffectTimeline() {
               </div>
             ) : (
               <div className="space-y-3 pr-2">
+                {hasEarlierEvents && (
+                  <button onClick={handleLoadEarlier} className="w-full py-1 text-[10px] text-primary/80 hover:text-primary">
+                    Load earlier events
+                  </button>
+                )}
                 {rounds.map(round => {
                   const sequence = buildDisplaySequence(grouped.get(round)!);
                   return (
@@ -428,13 +519,13 @@ export function EffectTimeline() {
                       <div className="space-y-0.5">
                         {sequence.map((item, idx) =>
                           item.kind === 'solo' ? (
-                            <EventRow key={item.event.id} event={item.event} isDm={isDm} />
+                            <EventRow key={item.event.id} event={item.event} isDm={canModifyTimeline} />
                           ) : (
                             <AoEGroupRow
                               key={`group-${item.groupId}-${idx}`}
                               groupId={item.groupId}
                               events={item.events}
-                              isDm={isDm}
+                              isDm={canModifyTimeline}
                               isExpanded={expandedGroups.has(item.groupId)}
                               onToggle={() => toggleGroup(item.groupId)}
                             />

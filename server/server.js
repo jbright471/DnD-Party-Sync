@@ -37,8 +37,13 @@ const {
     writeAuditEvent,
     reverseEvent,
     getCharacterProvenance,
+    getActiveCombatSession,
+    startCombatSession,
+    archiveActiveCombatSession,
+    listCombatSessions,
 } = require('./services/effects-engine');
 const { getPermissions, setPermissions, checkPermission } = require('./lib/permissions');
+const { getAutomationRules } = require('./lib/automationRules');
 const {
     normalizeRollVisibility,
     isPublicRoll,
@@ -456,7 +461,32 @@ app.get('/api/offline-bundle', (req, res) => {
 
 app.get('/api/effect-timeline', (req, res) => {
     try {
-        res.json(getCombatTimeline(db));
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 200, 1), 500);
+        const active = getActiveCombatSession(db);
+        const combatSessionId = req.query.sessionId !== undefined
+            ? parseInt(req.query.sessionId)
+            : (active?.id ?? null);
+        if (req.query.sessionId !== undefined && isNaN(combatSessionId)) {
+            return res.status(400).json({ error: 'Invalid combat session ID' });
+        }
+        const beforeId = req.query.beforeId === undefined ? undefined : parseInt(req.query.beforeId);
+        const targetId = req.query.targetId === undefined ? undefined : parseInt(req.query.targetId);
+        res.json(getFilteredTimeline(db, {
+            limit,
+            combatSessionId,
+            beforeId: Number.isNaN(beforeId) ? undefined : beforeId,
+            targetId: Number.isNaN(targetId) ? undefined : targetId,
+            eventType: req.query.eventType || undefined,
+        }));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/combat-sessions', (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 100);
+        res.json(listCombatSessions(db, limit));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1096,7 +1126,9 @@ io.on('connection', (socket) => {
             });
             broadcastTimeline();
 
-            if (delta < 0 && result.concentrationCheck && !skipConcentrationAutoRoll) {
+            const shouldPromptForConcentration = skipConcentrationAutoRoll
+                || getAutomationRules(db).concentrationChecks === 'prompt';
+            if (delta < 0 && result.concentrationCheck && !shouldPromptForConcentration) {
                 const state = getSessionState(db, characterId);
                 const charData = getCharacterData(db, characterId);
                 const conScore = charData?.abilityScores?.CON ?? 10;
@@ -1121,7 +1153,7 @@ io.on('connection', (socket) => {
                     io.emit('concentration_maintained', { characterId, characterName: charName, spellName, roll, total, dc });
                 }
                 broadcastTimeline();
-            } else if (delta < 0 && result.concentrationCheck && skipConcentrationAutoRoll) {
+            } else if (delta < 0 && result.concentrationCheck && shouldPromptForConcentration) {
                 // Manual roll mode — let client decide
                 const state = getSessionState(db, characterId);
                 io.emit('concentration_check_required', { characterId, spellName: state?.concentratingOn, dc: result.concentrationCheck.dc });
@@ -1573,7 +1605,7 @@ io.on('connection', (socket) => {
         if (isPublicRoll(rollVisibility)) logAction(actor || 'Someone', msg);
 
         // ── Auto-populate Initiative Tracker from player Initiative rolls ──
-        if (rollType === 'Initiative') {
+        if (rollType === 'Initiative' && getAutomationRules(db).initiativeSync) {
             const rollSocketInfo = playerSocketMap.get(socket.id);
             const characterId = rollSocketInfo?.characterId;
             if (characterId) {
@@ -1718,15 +1750,16 @@ io.on('connection', (socket) => {
     });
 
     socket.on('start_encounter', ({ encounterId }) => {
-        const partyCharacters = getAllCharacters();
+        const automationRules = getAutomationRules(db);
+        const partyCharacters = automationRules.initiativeSync ? getAllCharacters() : [];
         const tracker = startEncounter(encounterId, partyCharacters);
         if (tracker) {
+            const encounterInfo = db.prepare('SELECT name FROM encounters WHERE id = ?').get(encounterId);
+            startCombatSession(db, { encounterId, name: encounterInfo?.name || `Encounter ${encounterId}` });
             currentCombatRound = 1;
             currentTurnIndex = 0;
             saveCombatState();
             broadcastCombatState();
-            clearTimeline(db);
-
             // Aura-Sync cleanup
             clearAllAuras(db);
             broadcastAuras();
@@ -1977,6 +2010,7 @@ io.on('connection', (socket) => {
             const timeline = getCombatTimeline(db);
             const trackerState = getTrackerState();
             const totalRounds = currentCombatRound;
+            archiveActiveCombatSession(db, totalRounds);
 
             // Compress timeline into token-efficient format for LLM
             const events = timeline
@@ -2032,6 +2066,7 @@ io.on('connection', (socket) => {
 
             logAction('DM', '🏁 Combat has ended.');
             broadcastInitiative();
+            broadcastTimeline();
             broadcastPartyState();
 
             // Generate AI report if there were meaningful events
@@ -2048,8 +2083,9 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('[Combat] Error ending encounter:', err.message);
             // Still clear combat even if report fails
-            try { 
-                endEncounter(); 
+            try {
+                archiveActiveCombatSession(db, currentCombatRound);
+                endEncounter();
                 currentCombatRound = 0; 
                 currentTurnIndex = 0; 
                 saveCombatState(); 

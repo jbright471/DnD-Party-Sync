@@ -4,6 +4,23 @@ All notable changes to the **Arcane Ally** project will be documented in this fi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+- **Campaign Automation Policies**: DMs can configure automatic unconscious handling, recovery cleanup, concentration cleanup and check behavior, condition duration ticks, initiative sync, turn triggers, auras, and curated reactive handlers from **DM Dashboard -> Automation -> Policies**.
+- **Encounter Timeline Archives**: Combat events are assigned to named combat sessions and retained when an encounter ends instead of being deleted when the next encounter starts.
+- **Combat History API**: Added combat-session listing and cursor-based timeline queries for active and archived encounters.
+- **Focused Coverage**: Added tests for enabled defaults, partial policy persistence, disabled automation behavior, and encounter history isolation.
+
+### Changed
+- **Timeline Discovery**: The DM timeline now includes a current/archive selector, earlier-event pagination, read-only archived views, and search across actors, targets, descriptions, spells, conditions, and event payloads.
+- **Automation Authority**: HP rules, concentration behavior, condition ticks, initiative synchronization, turn triggers, auras, and reactive handlers now consult the same server-side campaign policy source.
+- **Documentation**: Updated the README, client guide, Arcane Codex, and technical references for policy controls, encounter retention, and container-native dependency isolation.
+
+### Fixed
+- **Timeline Retention**: Starting a new encounter no longer destroys the previous encounter's effect history.
+- **Automation Dialog Accessibility**: Added the missing dialog description and accessible labels for the new policy and timeline controls.
+
 ## [1.0.2] - 2026-07-08
 
 ### Added

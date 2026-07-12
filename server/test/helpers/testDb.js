@@ -99,6 +99,7 @@ function createTestDb() {
       is_reversed      INTEGER DEFAULT 0,
       reversed_by_event_id INTEGER DEFAULT NULL,
       group_id         TEXT DEFAULT NULL,
+      combat_session_id INTEGER DEFAULT NULL,
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (parent_event_id) REFERENCES effect_events(id)
     );
@@ -131,6 +132,16 @@ function createTestDb() {
     CREATE TABLE IF NOT EXISTS campaign_state (
       key                TEXT PRIMARY KEY,
       value              TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS combat_sessions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      encounter_id  INTEGER DEFAULT NULL,
+      name          TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'active',
+      started_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at      TEXT DEFAULT NULL,
+      total_rounds  INTEGER NOT NULL DEFAULT 0
     );
   `);
 

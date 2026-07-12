@@ -32,7 +32,8 @@ The Vite dev server runs on `http://localhost:5173` by default. It expects the b
 - `src/components/DiceRoller.tsx` - global/embedded dice tray with visibility controls
 - `src/components/RollableStat.tsx` - clickable ability, save, skill, and initiative rolls
 - `src/components/DMRollFeed.tsx` - DM roll stream with non-public visibility grouping
-- `src/components/DmAutomationPanel.tsx` - DM automation tools, including save requests
+- `src/components/DmAutomationPanel.tsx` - group effects, save requests, presets, auras, and campaign automation policies
+- `src/components/EffectTimeline.tsx` - active and archived encounter history, filtering, pagination, export, and reversal controls
 
 ## Roll Visibility
 
@@ -46,6 +47,18 @@ The client supports four roll modes:
 | Super-secret | DM only | No acknowledgement |
 
 Secret and super-secret rolls use the `server_dice_roll` socket event so the result is generated on the backend and never exposed in the browser before routing.
+
+## Automation Policies
+
+DMs configure campaign behavior from **DM Dashboard -> Automation -> Policies**. The panel reads and updates `/api/automation/rules`; changes save immediately and existing behavior remains enabled by default.
+
+Policies cover zero-HP unconscious handling, recovery cleanup, concentration cleanup and check mode, condition duration ticks, initiative synchronization, turn triggers, auras, and curated reactive item handlers.
+
+## Combat History
+
+`EffectTimeline.tsx` shows the active combat session by default. When combat ends, the server archives that encounter and the timeline selector exposes it as a read-only history view. Archived events remain searchable and exportable; destructive clear and reversal actions stay scoped to the current timeline.
+
+Timeline requests accept `sessionId`, `beforeId`, `limit`, `targetId`, and `eventType` query parameters. The timeline browser loads 200 events per page and prepends earlier pages on request; Markdown export retrieves the complete selected history in batches of 500.
 
 ## Mobile Builds
 

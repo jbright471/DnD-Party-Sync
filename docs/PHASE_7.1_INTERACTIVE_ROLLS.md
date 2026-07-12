@@ -51,3 +51,8 @@ Legacy blind-roll responses also respect the stored pending save visibility.
 ## DM Roll Feed
 
 The DM roll feed groups private, secret, and super-secret rolls as non-public rolls. Secret modes show lock/visibility metadata to the DM while preventing public broadcast.
+
+## Related Documentation
+
+- [Automation Policies & Combat History](./AUTOMATION_AND_COMBAT_HISTORY.md)
+- [Arcane Ally Client](../client/README.md)

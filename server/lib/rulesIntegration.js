@@ -9,6 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { getAutomationRules } = require('./automationRules');
 const {
   resolveDamage,
   resolveHeal,
@@ -203,6 +204,7 @@ function runInImmediateTransaction(db, fn) {
 
 function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', resistances = null) {
   return runInImmediateTransaction(db, () => {
+    const automationRules = getAutomationRules(db);
     const char = getCharacterData(db, characterId);
     const state = getSessionState(db, characterId);
     if (!char || !state) return { success: false, error: 'Character not found' };
@@ -230,13 +232,13 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
     state.currentHp = damageResult.newCurrentHp;
     state.tempHp = damageResult.newTempHp;
 
-    if (state.currentHp === 0 && state.concentratingOn) {
+    if (automationRules.concentrationCleanup && state.currentHp === 0 && state.concentratingOn) {
       const concChange = resolveConcentrationChange(state.concentratingOn, null, state.activeBuffs);
       state.concentratingOn = null;
       state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
     }
 
-    if (state.currentHp === 0 && !state.activeConditions.includes('unconscious')) {
+    if (automationRules.automaticUnconscious && state.currentHp === 0 && !state.activeConditions.includes('unconscious')) {
       state.activeConditions = [...state.activeConditions, 'unconscious'];
     }
 
@@ -264,13 +266,14 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
 
 function applyHealEvent(db, characterId, amount) {
   return runInImmediateTransaction(db, () => {
+    const automationRules = getAutomationRules(db);
     const char = getCharacterData(db, characterId);
     const state = getSessionState(db, characterId);
     if (!char || !state) return { success: false, error: 'Character not found' };
 
     const result = resolveHeal({ currentHp: state.currentHp, tempHp: state.tempHp, maxHp: char.baseMaxHp }, amount);
     state.currentHp = result.newCurrentHp;
-    if (state.currentHp > 0 && state.activeConditions.includes('unconscious')) {
+    if (automationRules.clearUnconsciousOnHeal && state.currentHp > 0 && state.activeConditions.includes('unconscious')) {
       state.activeConditions = state.activeConditions.filter(condition => condition !== 'unconscious');
       delete state.conditionDurations.unconscious;
     }
@@ -366,6 +369,9 @@ function removeConditionEvent(db, characterId, condition) {
 
 function tickConditionsEvent(db, characterId) {
   return runInImmediateTransaction(db, () => {
+    if (!getAutomationRules(db).conditionDurations) {
+      return { success: true, expired: [], remaining: [], skipped: true };
+    }
     const char = getCharacterData(db, characterId);
     const state = getSessionState(db, characterId);
     if (!char || !state) return { success: false, expired: [], remaining: [] };

@@ -25,7 +25,7 @@ npm start
 
 # Terminal 2: frontend
 ```bash
-cd Arcane-Ally/client
+cd client
 npm install
 npm run dev
 ```
@@ -105,6 +105,8 @@ Buttons disable after use to prevent duplicate spawns.
 
 **DMRollFeed** — aggregated live feed of all player dice rolls with filter toggles (ATK / DMG / SKILL / SAVE / INIT / HP / LOOT / PRIV). Private, secret, and super-secret rolls are grouped as non-public while still showing full context to the DM.
 
+**Campaign Automation Policies** — open **Automation -> Policies** to enable or disable automatic unconscious handling, concentration cleanup and roll behavior, condition duration ticks, initiative sync, turn triggers, auras, and curated reactive item handlers. Existing automation remains enabled by default after upgrades.
+
 **Encounter Builder & Prep Packs** — pre-plan encounters with named monster groups. DMs can now import complete "Prep Packs" (JSON bundles containing monsters, maps, notes, and sandboxed automation triggers) by pasting them directly into the Encounter Library.
 
 **DM Prep Panel** — per-character and per-encounter sticky notes accessible from the God-Eye View.
@@ -121,6 +123,7 @@ Buttons disable after use to prevent duplicate spawns.
 ### Audit Log & Event System
 - **Effect Preview & Consent** — DMs can dry-run effects before committing. Players get a real-time toast to **[Accept]** or **[Reject]** incoming state mutations.
 - **Effect Timeline** — immutable event store grouped by combat round, tracking damage, healing, conditions, buffs, rests, spell slots, and loot claims
+- **Encounter Archives** — ending combat preserves its timeline under the encounter name. DMs can browse, search, paginate, and export completed encounters without mixing them into the current live timeline
 - **Curated Reactive Automation** — built-in reaction handlers can respond to effect events; the current handler set includes `retributive_healing` for self-healing reactions triggered by outgoing healing
 - **Audit Log** — human-readable descriptions of every mutation with DM-accessible undo (event reversal)
 - **Idempotency Guards** — every mutation carries a unique request ID; duplicate events from websocket reconnects are automatically deduplicated
@@ -164,20 +167,19 @@ Buttons disable after use to prevent duplicate spawns.
 
 ## App Guidebook
 
-An in-app documentation hub at `/guide` with 17+ searchable guides covering Getting Started, Player Guide, and DM Guide. Includes a contextual `<HelpButton />` component for inline UI explanations.
+An in-app, task-first documentation hub at `/guide` with searchable player, DM, mechanics, AI/homebrew, hosting, and troubleshooting guides.
 
 ## Documentation
 
 - [Interactive Rolls & Roll Visibility](./docs/PHASE_7.1_INTERACTIVE_ROLLS.md)
+- [Automation Policies & Combat History](./docs/AUTOMATION_AND_COMBAT_HISTORY.md)
 - [Client README](./client/README.md)
 - [Legacy Parser References](./files/README.md)
-- [Project Brief](./dnd-companion-project-brief.md)
 - [Changelog](./CHANGELOG.md)
-- [Backlog](./TODO.md)
 
 ## Self-Hosting
 
-The project runs entirely on local hardware with no external cloud dependencies. The checked-in repo currently ships a production `Dockerfile`, but no `docker-compose.yml`; if you run Arcane Ally through Portainer or Compose, keep that stack configuration alongside your deployment.
+Core campaign state, the database, and configured AI processing run on your hardware. D&D Beyond import and Open5e compendium searches require internet access when used. The checked-in repo ships a production `Dockerfile`, but no `docker-compose.yml`; keep private Portainer or Compose configuration alongside your deployment rather than committing host-specific paths and addresses.
 
 1. **Environment Config**
    ```env
@@ -188,8 +190,14 @@ The project runs entirely on local hardware with no external cloud dependencies.
    ```
 
 2. **Local Development**
+
+   Backend terminal:
    ```bash
    cd server && npm install && npm start
+   ```
+
+   Frontend terminal, from the repository root:
+   ```bash
    cd client && npm install && npm run dev
    ```
 
@@ -201,6 +209,8 @@ The project runs entirely on local hardware with no external cloud dependencies.
    - The backend default port is `3001` (`PORT` in `.env`).
    - The Vite dev server default port is `5173`.
    - Production Portainer/Compose deployments should map `/api` and `/socket.io` traffic to the backend service on port `3001`.
+   - If the entire `server/` directory is bind-mounted into an Alpine-based container, mount `/app/server/node_modules` as a separate container volume. Native `better-sqlite3` binaries cannot be shared safely between host Linux and Alpine runtimes.
+   - Avoid running `npm install` on every container start. Build dependencies into the image and use `npm start` in the runtime container.
 
 5. **Container Health & Telemetry**
    - **Telemetry API** — `/api/health` exposes V8 process uptime and memory usage metrics.
@@ -239,7 +249,8 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 | `/api/encounters` / `/api/initiative` | Encounter library, tracker state, initiative export/duplicate helpers |
 | `/api/homebrew` | Compendium CRUD, AI generation, item parsing, item assignment |
 | `/api/v1/effects/bulk-apply` | Bulk AoE / multi-target damage, healing, and condition application |
-| `/api/effect-timeline` | Combat effect ledger and per-character provenance |
+| `/api/effect-timeline` | Active or archived combat ledger with session, cursor, target, and event-type filters |
+| `/api/combat-sessions` | Active and archived encounter metadata with event counts |
 | `/api/effect-presets` | Reusable effect and condition preset CRUD |
 | `/api/combat/snapshots` | Combat snapshot creation, diffing, restore, and restore audit logs |
 | `/api/maps` | Battlemap/overworld map CRUD, map files, tokens, and markers |
@@ -247,7 +258,7 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 | `/api/npcs` | NPC CRUD |
 | `/api/notes` | Shared party notes |
 | `/api/dm-notes` | DM-only prep notes |
-| `/api/automation` | Automation presets |
+| `/api/automation` | Automation presets; `/api/automation/rules` reads or updates campaign-wide policies |
 | `/api/prep-packs` | Portable encounter pack import |
 | `/api/world` | World time and weather state |
 | `/api/loot` | Loot generation, archive, and direct item assignment |

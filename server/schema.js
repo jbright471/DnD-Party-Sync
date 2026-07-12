@@ -351,6 +351,7 @@ function runMigrations() {
 
   // Seed default resource permissions
   db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('resource_permissions', '{"loot_claim":"open","cross_player_effects":"open","inventory_transfer":"open"}')`);
+  db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('automation_rules', '{"automaticUnconscious":true,"clearUnconsciousOnHeal":true,"concentrationCleanup":true,"concentrationChecks":"automatic","conditionDurations":true,"turnTriggers":true,"auras":true,"reactiveHandlers":true,"initiativeSync":true}')`);
 
   // ---- Phase 15.1: Compendium — store full stats on spawned monsters ----
   addColumnSafe('initiative_tracker', 'stats_json', "TEXT DEFAULT NULL");
@@ -384,6 +385,25 @@ function runMigrations() {
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // ---- Combat Session Archives ----
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS combat_sessions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      encounter_id  INTEGER DEFAULT NULL,
+      name          TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'active',
+      started_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at      TEXT DEFAULT NULL,
+      total_rounds  INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (encounter_id) REFERENCES encounters(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_combat_sessions_status ON combat_sessions (status, started_at DESC);
+  `);
+  addColumnSafe('effect_events', 'combat_session_id', 'INTEGER DEFAULT NULL');
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_effect_events_session ON effect_events (combat_session_id, id DESC);`);
+  } catch (_e) {}
 
   // ---- Phase 21.0: Rollback Audit Log ----
   db.exec(`
