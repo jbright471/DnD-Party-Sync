@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcane-ally.local/contracts/v1/state-delta.schema.json",
+  "title": "Arcane Ally State Delta v1",
+  "type": "object",
+  "required": ["schemaVersion", "campaignVersion", "commandId", "commandType", "aggregateVersions", "changes"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "campaignVersion": { "type": "integer", "minimum": 1 },
+    "commandId": { "type": "string", "minLength": 1 },
+    "commandType": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+    "aggregateVersions": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "changes": { "type": "object" },
+    "extensions": {
+      "type": "object",
+      "patternProperties": { "^x-[a-z0-9-]+$": {} },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

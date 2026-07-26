@@ -18,6 +18,8 @@ Completed encounters are stored as read-only timeline archives. The live table r
 
 Changes save immediately and apply to the next matching action. Disabling a policy does not reverse state already applied.
 
+Policy edits and automation-triggered state changes pass through the same transactional command boundary as manual actions. Cross-character effects commit every target, audit record, version update, and reconnect delta together or roll back as a unit.
+
 | Policy | Enabled behavior |
 |---|---|
 | Apply Unconscious at 0 HP | Adds `unconscious` when damage reduces a character to 0 HP |

@@ -9,13 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - Added a read-only **Player-State Preview** that lets an authenticated DM open the app as any character, including disconnected players, without sending DM-only state to the preview tab.
-- Added transactional command receipts for HP, temporary HP, spell slots and casting, concentration, conditions, buffs, rests, hit dice, and loot claims. Replayed command IDs return the original result without applying the mutation twice.
+- Added a transactional command orchestrator for all in-process REST and Socket.io mutations. State changes, command receipts, affected-aggregate versions, campaign ordering, audit events, and reconnect deltas now commit together; identical retries return the original result.
+- Added all-or-nothing multi-character effect commands with campaign and per-target version checks.
+- Added the versioned Automation Contract Registry with JSON Schemas for command envelopes, active effects, provenance entries, calculated stats, and state deltas.
+- Added REST and Socket.io contract negotiation, version discovery, and ordered delta recovery for reconnecting clients.
 - Added a DM PIN login gate that validates saved sessions before exposing protected dashboard tools.
 - Added a first-run guide that documents blank-state expectations, private runtime storage, and pre-publish privacy checks.
 
 ### Changed
 
 - HP writes now remain in the browser's offline queue until the server acknowledges them; lost acknowledgements retry with the same command ID.
+- Client state now tracks campaign and aggregate versions, consumes canonical `state_delta` messages, and requests missed deltas after reconnecting.
 - Player, map, action-log, and pending-import broadcasts now use role-filtered payloads, keeping hidden monsters and DM-only import data out of player clients.
 - Docker builds now use lockfile-preserving installs and compile native SQLite dependencies from the Node headers already included in the official image.
 - Updated the README, self-hosting guide, security policy, contributor guide, architecture references, environment templates, and in-app Arcane Codex for the current release behavior.

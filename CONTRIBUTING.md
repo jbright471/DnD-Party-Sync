@@ -45,8 +45,12 @@ Then verify the affected workflow in a browser at desktop and mobile width.
 
 - Follow existing React, Express, Socket.io, and rules-engine patterns.
 - Keep base-sheet data separate from session-state mutations.
+- Route every new REST or Socket.io mutation through the shared command boundary. Async handlers must calculate external work first and use an explicit transactional commit for their final database writes.
+- Identify every affected aggregate, preserve the caller's UUID across retries, and return version conflicts instead of silently overwriting newer state.
+- Treat `state_delta` as the canonical integration broadcast; apply role-safe projection before delivery and keep legacy domain events compatibility-only.
+- Version public automation changes through `server/contracts/`. Stable schema fields require a compatible v1 addition or a new negotiated major version; experimental fields belong under an `x-`-prefixed extension key.
 - Apply role-safe projections before broadcasting private combat state.
-- Add focused tests for shared rules, policy boundaries, authentication, and data retention.
+- Add focused tests for shared rules, transaction rollback, replay behavior, version conflicts, contract validation, policy boundaries, authentication, and data retention.
 - Update the README, Arcane Codex, changelog, and relevant `docs/` file when behavior changes.
 - Do not rewrite historical parser files under `files/` unless the task specifically concerns them.
 

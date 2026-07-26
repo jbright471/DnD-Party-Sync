@@ -54,11 +54,13 @@ npm run dev
 ## Core Features
 
 ### Real-Time Synchronization
-Every HP change, condition, spell slot, buff, and dice roll broadcasts instantly to all connected clients. The one-way state pipeline ensures consistency:
+Every state-changing REST request and Socket.io command passes through a shared transaction boundary. The server validates version expectations, calculates the change, commits the mutation with its receipt and audit metadata, then emits one canonical role-projected state delta:
 
 ```
-Client emit → Server handler → DB mutation → broadcastPartyState() → All screens update
+Command envelope → Version checks → Atomic SQLite commit → State delta → All screens converge
 ```
+
+Retries reuse the command UUID and receive the original result without applying the action again. Reconnecting clients request ordered deltas after their last campaign version and fall back to a full projected snapshot when retained history cannot fill the gap. Legacy domain events remain temporarily available for existing UI listeners; integrations should use the versioned state-delta contract.
 
 HP changes flash red for damage and green for healing on character cards. Incoming server state is normalized before rendering so connected screens converge on the same campaign state.
 
@@ -143,7 +145,8 @@ Buttons disable after use to prevent duplicate spawns.
 - **Archive Retention** — keep every encounter by default, or retain a chosen number of encounters or days from **Automation -> Policies -> Combat History**
 - **Curated Reactive Automation** — built-in reaction handlers can respond to effect events; the current handler set includes `retributive_healing` for self-healing reactions triggered by outgoing healing
 - **Audit Log** — human-readable descriptions of every mutation with DM-accessible undo (event reversal)
-- **Idempotency Guards** — high-risk character and inventory commands carry a unique request ID and commit their state, audit event, and stored result together. This first rollout covers HP, temporary HP, spell use, concentration, conditions, buffs, rests, hit dice, and loot claims; older administrative routes are being migrated incrementally.
+- **Transactional Command Orchestrator** — every in-process mutation uses an idempotent command receipt, campaign clock, affected-aggregate versions, audit record, and reconnect delta. Multi-target effects commit every target or roll back the whole action.
+- **Automation Contract Registry** — versioned JSON Schemas publish the stable command envelope, active effects, provenance, calculated stats, and state deltas. Clients can negotiate supported schema versions before sending automation commands.
 - **Permission System** — configurable rules for loot claiming, cross-player effects, and inventory transfers
 
 ### Battlemap
@@ -195,6 +198,8 @@ An in-app, task-first documentation hub at `/guide` with searchable player, DM, 
 - [Interactive Rolls & Roll Visibility](./docs/PHASE_7.1_INTERACTIVE_ROLLS.md)
 - [Automation Policies & Combat History](./docs/AUTOMATION_AND_COMBAT_HISTORY.md)
 - [Player Preview & Command Safety](./docs/PLAYER_PREVIEW_AND_COMMANDS.md)
+- [Automation Contracts v1](./docs/AUTOMATION_CONTRACTS.md)
+- [ADR-001: Transactional Command Orchestrator](./docs/architecture/ADR-001-transactional-command-orchestrator.md)
 - [Client README](./client/README.md)
 - [Legacy Parser References](./files/README.md)
 - [Security Policy](./SECURITY.md)
@@ -280,6 +285,7 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 | `/api/encounters` / `/api/initiative` | Encounter library, tracker state, initiative export/duplicate helpers |
 | `/api/homebrew` | Compendium CRUD, AI generation, item parsing, item assignment |
 | `/api/v1/effects/bulk-apply` | Bulk AoE / multi-target damage, healing, and condition application |
+| `/api/v1/contracts` | Automation registry, version negotiation, JSON Schemas, campaign versions, and reconnect deltas |
 | `/api/effect-timeline` | DM-authenticated active or archived combat ledger with session, cursor, target, and event-type filters |
 | `/api/combat-sessions` | DM-authenticated active and archived encounter metadata with event counts |
 | `/api/effect-presets` | Reusable effect and condition preset CRUD |

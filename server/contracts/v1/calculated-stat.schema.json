@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcane-ally.local/contracts/v1/calculated-stat.schema.json",
+  "title": "Arcane Ally Calculated Stat v1",
+  "type": "object",
+  "required": ["key", "value", "provenance"],
+  "properties": {
+    "key": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "value": {},
+    "provenance": {
+      "type": "array",
+      "items": { "$ref": "provenance-entry.schema.json" }
+    },
+    "calculationVersion": { "type": "string" },
+    "extensions": {
+      "type": "object",
+      "patternProperties": { "^x-[a-z0-9-]+$": {} },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

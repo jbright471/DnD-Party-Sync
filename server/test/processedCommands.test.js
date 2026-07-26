@@ -6,6 +6,9 @@ import { applyDamageEvent, getSessionState } from '../lib/rulesIntegration.js';
 import {
   CommandConflictError,
   executeProcessedCommand,
+  executeTransactionalCommand,
+  getCampaignVersion,
+  getStateDeltas,
   pruneProcessedCommands,
 } from '../lib/processedCommands.js';
 
@@ -100,6 +103,77 @@ describe('processedCommands', () => {
     expect(outcome.result).toEqual({ success: false, error: 'Resource unavailable' });
     expect(outcome.aggregateVersion).toBe(0);
     expect(db.prepare('SELECT version FROM aggregate_versions WHERE aggregate_key = ?').get('character:1')).toBeUndefined();
+  });
+
+  it('commits multiple aggregate versions, the campaign clock, audit, and delta atomically', () => {
+    const first = executeTransactionalCommand(db, {
+      commandId: 'multi-aggregate-1',
+      commandType: 'effect.party.apply',
+      expectedCampaignVersion: 0,
+      expectedAggregateVersions: {
+        'character:1': 0,
+        'character:2': 0,
+      },
+      payload: { targets: [1, 2], amount: 4 },
+    }, () => ({ success: true, affected: [1, 2] }), {
+      buildDelta: result => ({ kind: 'effects_applied', affected: result.affected }),
+    });
+
+    expect(first).toMatchObject({
+      replayed: false,
+      campaignVersion: 1,
+      aggregateVersions: { 'character:1': 1, 'character:2': 1 },
+    });
+    expect(getCampaignVersion(db)).toBe(1);
+    expect(getStateDeltas(db, 0)).toEqual([expect.objectContaining({
+      campaignVersion: 1,
+      commandId: 'multi-aggregate-1',
+      changes: { kind: 'effects_applied', affected: [1, 2] },
+    })]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM command_audit_events').get().count).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM command_aggregates').get().count).toBe(2);
+  });
+
+  it('rejects stale campaign and per-aggregate expectations independently', () => {
+    executeTransactionalCommand(db, {
+      commandId: 'seed-version',
+      commandType: 'character.update',
+      aggregates: [{ key: 'character:1', expectedVersion: 0 }],
+      payload: {},
+    }, () => ({ success: true }));
+
+    expect(() => executeTransactionalCommand(db, {
+      commandId: 'stale-campaign',
+      commandType: 'character.update',
+      expectedCampaignVersion: 0,
+      aggregates: [{ key: 'character:2', expectedVersion: 0 }],
+      payload: {},
+    }, () => ({ success: true }))).toThrow(expect.objectContaining({ code: 'STALE_CAMPAIGN_VERSION' }));
+
+    expect(() => executeTransactionalCommand(db, {
+      commandId: 'stale-character',
+      commandType: 'character.update',
+      expectedCampaignVersion: 1,
+      aggregates: [{ key: 'character:1', expectedVersion: 0 }],
+      payload: {},
+    }, () => ({ success: true }))).toThrow(expect.objectContaining({ code: 'STALE_AGGREGATE_VERSION' }));
+  });
+
+  it('runs post-commit delivery once and never for replayed commands', () => {
+    const delivered = [];
+    const command = {
+      commandId: 'delivery-once',
+      commandType: 'character.update',
+      aggregateKey: 'character:1',
+      payload: { value: 2 },
+    };
+    const options = { afterCommit: outcome => delivered.push(outcome.stateDelta) };
+
+    executeTransactionalCommand(db, command, () => ({ success: true }), options);
+    executeTransactionalCommand(db, command, () => ({ success: true }), options);
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatchObject({ campaignVersion: 1, commandId: 'delivery-once' });
   });
 
   it('prunes old committed receipts without touching recent commands', () => {

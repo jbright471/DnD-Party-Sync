@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { generateWeatherLLM } = require('../ollama');
+const { executePreparedHttpMutation } = require('../lib/httpMutationBoundary');
 
 // GET /api/world/state
 router.get('/state', (req, res) => {
@@ -63,8 +64,19 @@ router.post('/weather', async (req, res) => {
         if (!weather) {
             return res.status(502).json({ error: 'Ollama failed to generate weather. Is it running?' });
         }
-        db.prepare(`UPDATE campaign_state SET value = ? WHERE key = 'current_weather'`).run(JSON.stringify(weather));
-        res.json(weather);
+        const outcome = executePreparedHttpMutation(db, req, {
+            aggregateKeys: ['campaign:world'],
+            commandType: 'world.weather.update',
+            execute: () => {
+                db.prepare(`UPDATE campaign_state SET value = ? WHERE key = 'current_weather'`).run(JSON.stringify(weather));
+                return { success: true, weather };
+            },
+            buildDelta: () => ({ kind: 'world_weather_updated', scopes: ['world'] }),
+            afterCommit: req.app.get('broadcastStateDelta'),
+        });
+        res.setHeader('X-Command-ID', outcome.commandId);
+        res.setHeader('X-Campaign-Version', String(outcome.campaignVersion));
+        res.json(outcome.result.weather);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
