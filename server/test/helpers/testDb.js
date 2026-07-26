@@ -162,6 +162,11 @@ function createTestDb() {
       payload_hash       TEXT NOT NULL,
       status             TEXT NOT NULL DEFAULT 'processing',
       result_json        TEXT DEFAULT NULL,
+      schema_version     TEXT NOT NULL DEFAULT '1.0.0',
+      expected_campaign_version INTEGER DEFAULT NULL,
+      campaign_version   INTEGER DEFAULT NULL,
+      aggregate_versions_json TEXT DEFAULT '{}',
+      delta_json         TEXT DEFAULT NULL,
       created_at         TEXT NOT NULL DEFAULT (datetime('now')),
       committed_at       TEXT DEFAULT NULL
     );
@@ -171,6 +176,48 @@ function createTestDb() {
       version        INTEGER NOT NULL DEFAULT 0,
       updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS campaign_clock (
+      id         INTEGER PRIMARY KEY CHECK (id = 1),
+      version    INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS command_aggregates (
+      command_id       TEXT NOT NULL,
+      aggregate_key    TEXT NOT NULL,
+      expected_version INTEGER DEFAULT NULL,
+      before_version   INTEGER NOT NULL,
+      after_version    INTEGER NOT NULL,
+      PRIMARY KEY (command_id, aggregate_key),
+      FOREIGN KEY (command_id) REFERENCES processed_commands(command_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS command_audit_events (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      command_id       TEXT NOT NULL UNIQUE,
+      command_type     TEXT NOT NULL,
+      actor_type       TEXT NOT NULL,
+      actor_id         TEXT DEFAULT NULL,
+      status           TEXT NOT NULL,
+      campaign_version INTEGER NOT NULL,
+      aggregates_json  TEXT NOT NULL DEFAULT '{}',
+      payload_json     TEXT NOT NULL DEFAULT 'null',
+      result_json      TEXT NOT NULL DEFAULT 'null',
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS state_deltas (
+      campaign_version INTEGER PRIMARY KEY,
+      command_id       TEXT NOT NULL UNIQUE,
+      schema_version   TEXT NOT NULL DEFAULT '1.0.0',
+      command_type     TEXT NOT NULL,
+      aggregates_json  TEXT NOT NULL DEFAULT '{}',
+      delta_json       TEXT NOT NULL DEFAULT '{}',
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT OR IGNORE INTO campaign_clock (id, version) VALUES (1, 0);
   `);
 
   return db;

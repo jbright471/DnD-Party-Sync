@@ -24,6 +24,7 @@ const { backupDatabase } = require('./backup');
 const cron = require('node-cron');
 const automationRouter = require('./routes/automation');
 const dmNotesRouter = require('./routes/dmNotes');
+const { createContractRouter } = require('./routes/contracts');
 const {
     applyPartyEffect,
     previewPartyEffect,
@@ -59,8 +60,15 @@ const {
 const {
     CommandConflictError,
     executeProcessedCommand,
+    getAggregateVersions,
+    getCampaignVersion,
+    getStateDeltas,
     pruneProcessedCommands,
 } = require('./lib/processedCommands');
+const { negotiateVersion } = require('./lib/automationContractRegistry');
+const { executeEffectCommand } = require('./services/transactionalEffects');
+const { createHttpMutationBoundary } = require('./lib/httpMutationBoundary');
+const { installSocketMutationBoundary } = require('./lib/socketMutationBoundary');
 const {
     normalizeRollVisibility,
     isPublicRoll,
@@ -161,10 +169,28 @@ const io = new Server(server, {
 });
 const previewIo = io.of('/player-preview');
 app.set('io', io);
+app.set('broadcastStateDelta', broadcastStateDelta);
 
 // --- Middleware ---
 app.use(cors());
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '15mb' }));
+app.use(createHttpMutationBoundary({
+    db,
+    afterCommit: outcome => broadcastStateDelta(outcome),
+    sessionId: () => getActiveCombatSession(db)?.id ?? null,
+    shouldSkip: req => {
+        const pathName = String(req.originalUrl || '').split('?')[0];
+        return pathName === '/api/v1/effects/bulk-apply'
+            || pathName === '/api/v1/contracts/negotiate'
+            || /^\/api\/characters\/import(?:\/|$)/.test(pathName)
+            || /^\/api\/homebrew\/(?:parse-item|generate)(?:\/|$)/.test(pathName)
+            || pathName === '/api/homebrew'
+            || pathName === '/api/loot/generate'
+            || pathName === '/api/world/weather'
+            || pathName === '/api/lore'
+            || pathName === '/api/chat';
+    },
+}));
 
 // --- REST Routes ---
 app.use('/api/characters', characterRouter);
@@ -182,6 +208,7 @@ app.use('/api/automation', automationRouter);
 app.use('/api/dm-notes', dmNotesRouter);
 app.use('/api/prep-packs', prepPacksRouter);
 app.use('/api/effect-presets', effectPresetsRouter);
+app.use('/api/v1/contracts', createContractRouter(db));
 
 // --- Combat Snapshot REST Routes ---
 app.post('/api/combat/snapshots', (req, res) => {
@@ -312,6 +339,41 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+app.post('/api/v1/effects/bulk-apply', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+    if (!requireDm(token)) return res.status(401).json({ error: 'Unauthorized: Invalid DM Token' });
+
+    try {
+        const outcome = executeEffectCommand(db, req.body, {
+            actorType: 'dm',
+            actorId: 'DM',
+            actorName: req.body?.payload?.actor || req.body?.actor || 'DM',
+            sessionId: getActiveCombatSession(db)?.id ?? null,
+            sessionRound: currentCombatRound,
+            turnIndex: currentTurnIndex,
+        }, { afterCommit: committed => broadcastStateDelta(committed) });
+        return res.json({
+            success: outcome.result?.success !== false,
+            commandId: outcome.commandId,
+            replayed: outcome.replayed,
+            campaignVersion: outcome.campaignVersion,
+            aggregateVersions: outcome.aggregateVersions,
+            stateDelta: outcome.stateDelta,
+            ...(outcome.result || {}),
+        });
+    } catch (error) {
+        const status = error instanceof CommandConflictError ? 409 : 500;
+        return res.status(status).json({
+            success: false,
+            error: error.message,
+            code: error.code || 'COMMAND_FAILED',
+            details: error.details || undefined,
+        });
+    }
+});
+
+// Retained fallback implementation; the orchestrated handler above always terminates matching requests.
 app.post('/api/v1/effects/bulk-apply', async (req, res) => {
     try {
         const authHeader = req.headers.authorization || '';
@@ -796,6 +858,34 @@ function emitRoleState(socket) {
     socket.emit('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
 }
 
+function broadcastStateDelta(outcome) {
+    if (!outcome?.stateDelta) return;
+    const resolvedParty = getResolvedPartyState();
+    const tracker = getTrackerState();
+    const timeline = getCombatTimeline(db);
+    const logs = db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse();
+    forEachConnectedSocket(socket => {
+        const projection = getSocketProjectionContext(socket);
+        const projectedLogs = socket.dmAuthenticated
+            ? logs
+            : logs.map(({ effects_json: _effectsJson, ...log }) => log);
+        socket.emit('state_delta', {
+            ...outcome.stateDelta,
+            state: {
+                party: projectPartyState(resolvedParty, projection),
+                initiative: projectInitiativeState(tracker, {
+                    ...projection,
+                    permissions: getPermissions(db),
+                }),
+                timeline: projectTimeline(timeline, projection),
+                actionLog: socket.castView ? [] : projectedLogs,
+                combat: { round: currentCombatRound, turnIndex: currentTurnIndex },
+            },
+        });
+    });
+    broadcastPlayerPreviewSnapshots();
+}
+
 function broadcastPartyState() {
     if (partyStateTimer) clearTimeout(partyStateTimer);
     partyStateTimer = setTimeout(() => {
@@ -1007,6 +1097,9 @@ function emitCommandResult(socket, eventName, acknowledge, outcome) {
         commandId: outcome.commandId,
         replayed: outcome.replayed,
         aggregateVersion: outcome.aggregateVersion,
+        aggregateVersions: outcome.aggregateVersions,
+        campaignVersion: outcome.campaignVersion,
+        stateDelta: outcome.stateDelta,
         result: outcome.result,
         ...(successful ? {} : {
             error: mutation?.error || outcome.result?.error || 'Command was rejected',
@@ -1079,15 +1172,20 @@ function executeCharacterSocketCommand({
                 VALUES (datetime('now'), ?, ?, 'applied')
             `).run(actor || characterName, result.logMessage || audit.description);
             return { mutation: result, characterName };
+        }, {
+            buildDelta: () => ({
+                kind: commandType,
+                scopes: ['party', 'initiative', 'timeline', 'action_log'],
+                target: { id: Number(characterId), type: 'character' },
+            }),
+            afterCommit: committed => {
+                broadcastStateDelta(committed);
+                afterCommit?.(committed.result.mutation, committed.result.characterName);
+            },
         });
 
         emitCommandResult(socket, resultEvent, acknowledge, outcome);
-        if (!outcome.replayed && outcome.result?.mutation?.success && outcome.result.mutation.mutated !== false) {
-            broadcastLogs();
-            broadcastPartyState();
-            broadcastTimeline();
-            afterCommit?.(outcome.result.mutation, outcome.result.characterName);
-        } else if (!outcome.result?.mutation?.success && outcome.result?.mutation?.error) {
+        if (!outcome.result?.mutation?.success && outcome.result?.mutation?.error) {
             socket.emit('rules_error', { message: outcome.result.mutation.error });
         }
         return outcome;
@@ -1145,6 +1243,58 @@ io.on('connection', (socket) => {
             return next(new Error('Encounter cast view is read-only'));
         }
         next();
+    });
+
+    installSocketMutationBoundary(socket, {
+        db,
+        mutationEvents: new Set([
+            'save_aura', 'toggle_aura', 'update_aura_targets', 'delete_aura',
+            'save_smart_pin', 'delete_smart_pin', 'save_pins_to_template',
+            'toggle_approval_mode', 'resolve_pending_action', 'resolve_pending_import',
+            'concentration_check_result', 'toggle_feature', 'update_character',
+            'dice_roll', 'server_dice_roll', 'dm_request_save', 'spawn_monster',
+            'configure_boss_phases', 'transition_boss_phase', 'toggle_entity_visibility',
+            'activate_map', 'move_token', 'sync_map_tokens', 'start_encounter',
+            'next_turn', 'prev_turn', 'set_initiative', 'reorder_initiative',
+            'auto_roll_initiative', 'dismiss_dead', 'clear_all_conditions',
+            'add_marker', 'update_marker', 'delete_marker', 'update_initiative_hp',
+            'request_effect', 'resolve_pending_effect', 'trigger_automation',
+            'clear_effect_timeline', 'update_note', 'create_note', 'delete_note',
+            'drop_loot', 'remove_loot', 'loot_vote_open', 'loot_vote_cast',
+            'loot_vote_cancel', 'loot_vote_force_resolve', 'delete_character',
+            'update_permissions', 'reverse_event', 'reverse_group',
+            'blind_roll_response',
+        ]),
+        actor: connectedSocket => ({
+            type: connectedSocket.dmAuthenticated ? 'dm' : 'player',
+            id: playerSocketMap.get(connectedSocket.id)?.characterId ?? null,
+        }),
+        sessionId: () => getActiveCombatSession(db)?.id ?? null,
+        afterCommit: committed => broadcastStateDelta(committed),
+    });
+
+    socket.on('negotiate_automation_contract', ({ supportedVersions } = {}, acknowledge) => {
+        const result = negotiateVersion(supportedVersions);
+        if (typeof acknowledge === 'function') acknowledge(result);
+        socket.emit('automation_contract_negotiated', result);
+    });
+
+    socket.on('request_state_deltas', ({ afterVersion = 0, limit = 250 } = {}, acknowledge) => {
+        const normalizedAfter = Math.max(0, Number(afterVersion) || 0);
+        const currentVersion = getCampaignVersion(db);
+        const earliest = db.prepare('SELECT MIN(campaign_version) AS version FROM state_deltas').get()?.version;
+        const resyncRequired = earliest !== null && earliest !== undefined && normalizedAfter < earliest - 1;
+        const result = {
+            schemaVersion: '1.0.0',
+            afterVersion: normalizedAfter,
+            campaignVersion: currentVersion,
+            aggregateVersions: getAggregateVersions(db),
+            resyncRequired,
+            deltas: resyncRequired ? [] : getStateDeltas(db, normalizedAfter, limit),
+        };
+        if (typeof acknowledge === 'function') acknowledge(result);
+        socket.emit('state_delta_batch', result);
+        if (resyncRequired) emitRoleState(socket);
     });
 
     // DM room join — validates stored token before admitting to dm_room
@@ -1249,31 +1399,75 @@ io.on('connection', (socket) => {
         socket.emit('pins_saved_to_template_result', res);
     });
 
-    socket.on('log_action', async ({ actor, description, useLlm }, callback) => {
+    socket.on('log_action', async (command, callback) => {
+        const { actor, description, useLlm, commandId, requestId, expectedCampaignVersion, expectedAggregateVersions } = command || {};
         if (!actor || !description) return callback?.({ success: false });
-        if (!useLlm) {
-            logAction(actor, description);
-            broadcastPartyState();
-            return callback?.({ success: true });
+        try {
+            const effectsArray = useLlm
+                ? await resolveActionLLM(description, db.prepare('SELECT * FROM characters').all())
+                : [];
+            const affectedIds = [...new Set((effectsArray || [])
+                .map(effect => Number(effect.characterId))
+                .filter(Number.isInteger))];
+            const resolvedCommandId = commandId || requestId || randomUUID();
+            const outcome = executeProcessedCommand(db, {
+                commandId: resolvedCommandId,
+                commandType: 'action.resolve',
+                actorType: socket.dmAuthenticated ? 'dm' : 'player',
+                actorId: playerSocketMap.get(socket.id)?.characterId ?? null,
+                sessionId: getActiveCombatSession(db)?.id ?? null,
+                expectedCampaignVersion: expectedCampaignVersion ?? null,
+                aggregates: [
+                    { key: 'collection:action_log', expectedVersion: expectedAggregateVersions?.['collection:action_log'] ?? null },
+                    ...affectedIds.map(id => ({
+                        key: `character:${id}`,
+                        expectedVersion: expectedAggregateVersions?.[`character:${id}`] ?? null,
+                    })),
+                ],
+                payload: { actor, description, useLlm: !!useLlm },
+            }, () => {
+                const warning = useLlm && !effectsArray ? 'LLM failed to parse.' : null;
+                const pending = Boolean(useLlm && effectsArray && isApprovalMode);
+                if (useLlm && effectsArray && !pending) {
+                    for (const effect of effectsArray) {
+                        const result = applyEffect(effect);
+                        if (!result?.success) throw new Error(result?.error || `Unable to apply effect ${effect.type}`);
+                    }
+                }
+                const suffix = warning ? ' (LLM failed to parse)' : useLlm && effectsArray ? ' (Resolved by LLM)' : '';
+                db.prepare(`
+                    INSERT INTO action_log (timestamp, actor, action_description, status, effects_json)
+                    VALUES (datetime('now'), ?, ?, ?, ?)
+                `).run(
+                    actor,
+                    description + suffix,
+                    pending ? 'pending' : 'applied',
+                    pending ? JSON.stringify({ type: 'multi', effects: effectsArray }) : null,
+                );
+                return { success: true, warning, pending };
+            }, {
+                buildDelta: () => ({
+                    kind: 'action_resolved',
+                    scopes: ['party', 'initiative', 'timeline', 'action_log'],
+                    affectedCharacters: affectedIds,
+                }),
+                afterCommit: committed => broadcastStateDelta(committed),
+            });
+            callback?.({
+                success: true,
+                replayed: outcome.replayed,
+                campaignVersion: outcome.campaignVersion,
+                warning: outcome.result.warning || undefined,
+            });
+        } catch (error) {
+            callback?.({ success: false, error: error.message, code: error.code || 'COMMAND_FAILED' });
         }
-        const partyContext = db.prepare('SELECT * FROM characters').all();
-        const effectsArray = await resolveActionLLM(description, partyContext);
-        if (!effectsArray) {
-            logAction(actor, description + ' (LLM failed to parse)');
-            broadcastPartyState();
-            return callback?.({ success: true, warning: 'LLM failed to parse.' });
-        }
-        if (isApprovalMode) {
-            logAction(actor, description, 'pending', JSON.stringify({ type: 'multi', effects: effectsArray }));
-            return callback?.({ success: true });
-        }
-        for (const effect of effectsArray) applyEffect(effect);
-        logAction(actor, description + ' (Resolved by LLM)');
-        broadcastPartyState();
-        callback?.({ success: true });
     });
 
-    socket.on('toggle_approval_mode', (mode) => {
+    socket.on('toggle_approval_mode', (commandOrMode, legacyMode) => {
+        const mode = typeof commandOrMode === 'boolean'
+            ? commandOrMode
+            : (legacyMode ?? commandOrMode?.mode ?? commandOrMode?.value);
         isApprovalMode = !!mode;
         try {
             db.prepare("INSERT OR REPLACE INTO campaign_state (key, value) VALUES ('approval_mode', ?)").run(isApprovalMode ? '1' : '0');
@@ -1384,81 +1578,30 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('apply_effect_preset', async ({ presetId, targetIds }) => {
-        if (!socket.dmAuthenticated) return;
+    socket.on('apply_effect_preset', (command, acknowledge) => {
+        if (!socket.dmAuthenticated) { emitCommandError(socket, 'effect_preset_result', acknowledge, new Error('DM only')); return; }
         try {
-            const preset = db.prepare('SELECT * FROM effect_presets WHERE id = ?').get(presetId);
-            if (!preset) return;
-
+            const preset = db.prepare('SELECT * FROM effect_presets WHERE id = ?').get(command?.presetId);
+            if (!preset) throw new Error('Effect preset not found');
             const effects = JSON.parse(preset.effects_json || '[]');
-            if (effects.length === 0) return;
-
-            const targetNames = [];
-            const promises = targetIds.map(async (target) => {
-                if (target.type === 'character') {
-                    const charRow = db.prepare('SELECT name FROM characters WHERE id = ?').get(target.id);
-                    const charName = charRow ? charRow.name : 'Unknown Character';
-                    targetNames.push(charName);
-
-                    for (const effect of effects) {
-                        const effectToApply = { ...effect, characterId: target.id };
-                        const res = applyEffect(effectToApply);
-                        if (res.success) {
-                            writeAuditEvent(db, {
-                                sessionRound: currentCombatRound,
-                                turnIndex: currentTurnIndex,
-                                eventType: effect.type === 'buff' ? 'buff_applied' : (effect.type === 'condition' ? 'condition_applied' : effect.type),
-                                actor: 'DM',
-                                targetId: target.id,
-                                targetType: 'character',
-                                targetName: charName,
-                                payload: effectToApply,
-                                description: `${charName}: Applied preset ${preset.name} - ${res.logMessage}`,
-                                sourcePresetId: preset.id
-                            });
-                        }
-                    }
-                } else {
-                    const entity = db.prepare('SELECT * FROM initiative_tracker WHERE id = ?').get(target.id);
-                    if (entity) {
-                        targetNames.push(entity.entity_name);
-                        for (const effect of effects) {
-                            let result = { success: false, logMessage: '' };
-                            let eventType = 'unknown';
-
-                            if (effect.type === 'condition') {
-                                result = { success: true, logMessage: `${entity.entity_name}: ${effect.condition} applied (noted)` };
-                                eventType = 'condition_applied';
-                            } else if (effect.type === 'buff') {
-                                result = { success: true, logMessage: `${entity.entity_name}: Buff ${effect.buffData?.name} applied (noted)` };
-                                eventType = 'buff_applied';
-                            }
-
-                            if (result.success) {
-                                writeAuditEvent(db, {
-                                    sessionRound: currentCombatRound,
-                                    turnIndex: currentTurnIndex,
-                                    eventType,
-                                    actor: 'DM',
-                                    targetId: target.id,
-                                    targetType: 'monster',
-                                    targetName: entity.entity_name,
-                                    payload: effect,
-                                    description: `${entity.entity_name}: Applied preset ${preset.name} - ${result.logMessage}`,
-                                    sourcePresetId: preset.id
-                                });
-                            }
-                        }
-                    }
-                }
-            });
-
-            await Promise.all(promises);
-            broadcastPartyState();
-            broadcastTimelineImmediate();
-            logAction('DM', `Applied preset ${preset.name} to targets: ${targetNames.join(', ')}`);
-        } catch (err) {
-            console.error('Error applying effect preset:', err);
+            const outcome = executeEffectCommand(db, {
+                commandId: command?.commandId,
+                requestId: command?.requestId,
+                targets: command?.targetIds,
+                effects,
+                actor: 'DM',
+                expectedCampaignVersion: command?.expectedCampaignVersion,
+                expectedAggregateVersions: command?.expectedAggregateVersions,
+            }, {
+                actorType: 'dm', actorId: 'DM', actorName: `Preset: ${preset.name}`,
+                sessionId: getActiveCombatSession(db)?.id ?? null,
+                sessionRound: currentCombatRound, turnIndex: currentTurnIndex,
+                sourcePresetId: preset.id,
+            }, { afterCommit: committed => broadcastStateDelta(committed) });
+            emitCommandResult(socket, 'effect_preset_result', acknowledge, outcome);
+        } catch (error) {
+            emitCommandError(socket, 'effect_preset_result', acknowledge, error);
+            if (!(error instanceof CommandConflictError)) console.error('[Command] apply_effect_preset failed:', error);
         }
     });
 
@@ -1595,6 +1738,13 @@ io.on('connection', (socket) => {
                 `).run(actor || 'System', result.logMessage);
 
                 return { mutation: result, concentration, characterName: charName };
+            }, {
+                buildDelta: () => ({
+                    kind: 'character.hp.update',
+                    scopes: ['party', 'initiative', 'timeline', 'action_log'],
+                    target: { id: Number(characterId), type: 'character' },
+                }),
+                afterCommit: committed => broadcastStateDelta(committed),
             });
 
             emitCommandResult(socket, 'update_hp_result', acknowledge, outcome);
@@ -1602,12 +1752,6 @@ io.on('connection', (socket) => {
 
             const result = outcome.result.mutation;
             const concentration = outcome.result.concentration;
-            broadcastLogs();
-            broadcastPartyState();
-            broadcastTimeline();
-            if (result.concentrationCleanup?.affectedTrackerIds?.length > 0 || concentration?.passed === false) {
-                broadcastInitiative();
-            }
             if (concentration?.mode === 'prompt') {
                 io.emit('concentration_check_required', concentration);
             } else if (concentration?.mode === 'automatic') {
@@ -1829,10 +1973,19 @@ io.on('connection', (socket) => {
     });
 
     socket.on('apply_buff', (command, acknowledge) => {
-        const { characterIds, buffData, actor, requestId, commandId, expectedVersion } = command || {};
+        const {
+            characterIds, buffData, actor, requestId, commandId, expectedVersion,
+            expectedCampaignVersion, expectedAggregateVersions,
+        } = command || {};
         const ids = (Array.isArray(characterIds) ? characterIds : [characterIds])
             .map(Number)
             .filter(Number.isInteger);
+        const affectedIds = [...new Set([
+            ...ids,
+            ...(buffData?.isConcentration && buffData?.sourceCharacterId != null && Number.isInteger(Number(buffData.sourceCharacterId))
+                ? [Number(buffData.sourceCharacterId)]
+                : []),
+        ])];
         const resolvedCommandId = commandId || requestId || randomUUID();
         try {
             const outcome = executeProcessedCommand(db, {
@@ -1841,8 +1994,12 @@ io.on('connection', (socket) => {
                 actorType: socket.dmAuthenticated ? 'dm' : 'player',
                 actorId: playerSocketMap.get(socket.id)?.characterId ?? null,
                 sessionId: getActiveCombatSession(db)?.id ?? null,
-                aggregateKey: 'party:effects',
-                expectedVersion: expectedVersion ?? null,
+                expectedCampaignVersion: expectedCampaignVersion ?? null,
+                aggregates: affectedIds.map(id => ({
+                    key: `character:${id}`,
+                    expectedVersion: expectedAggregateVersions?.[`character:${id}`]
+                        ?? (affectedIds.length === 1 ? expectedVersion : null),
+                })),
                 payload: { characterIds: ids, buffData, actor },
             }, () => {
                 if (ids.length === 0) return { success: false, error: 'No characters selected' };
@@ -1882,15 +2039,16 @@ io.on('connection', (socket) => {
                     return { characterId: id, characterName, buff: result.buff };
                 });
                 return { success: true, records, concentrationChanged: Boolean(resolvedBuffData.isConcentration) };
+            }, {
+                buildDelta: () => ({
+                    kind: 'party.buff.apply',
+                    scopes: ['party', 'initiative', 'timeline', 'action_log'],
+                    targets: ids.map(id => ({ id, type: 'character' })),
+                }),
+                afterCommit: committed => broadcastStateDelta(committed),
             });
 
             emitCommandResult(socket, 'buff_result', acknowledge, outcome);
-            if (!outcome.replayed && outcome.result?.success) {
-                broadcastLogs();
-                broadcastPartyState();
-                broadcastTimeline();
-                if (outcome.result.concentrationChanged) broadcastInitiative();
-            }
         } catch (error) {
             emitCommandError(socket, 'buff_result', acknowledge, error);
             if (!(error instanceof CommandConflictError)) console.error('[Command] apply_buff failed:', error);
@@ -2583,13 +2741,12 @@ io.on('connection', (socket) => {
         broadcastTimeline();
     });
 
-    socket.on('end_encounter', async (callback) => {
+    socket.on('end_encounter', async (command, callback) => {
         try {
             // Snapshot timeline + party state BEFORE clearing
             const timeline = getCombatTimeline(db);
             const trackerState = getTrackerState();
             const totalRounds = currentCombatRound;
-            archiveActiveCombatSession(db, totalRounds);
 
             // Compress timeline into token-efficient format for LLM
             const events = timeline
@@ -2630,52 +2787,43 @@ io.on('connection', (socket) => {
                     };
                 });
 
-            // Clear combat state
-            endEncounter();
-            currentCombatRound = 0;
-            currentTurnIndex = 0;
-            saveCombatState();
-            broadcastCombatState();
-
-            // Clear active auras & smart pins
-            clearAllAuras(db);
-            broadcastAuras();
-            clearAllSmartPins(db);
-            broadcastSmartPins();
-
-            logAction('DM', '🏁 Combat has ended.');
-            broadcastInitiative();
-            broadcastTimeline();
-            broadcastPartyState();
-
-            // Generate AI report if there were meaningful events
+            let reportText = null;
             if (events.length >= 2) {
-                const reportText = await generateCombatReport({ events, survivors, totalRounds });
-                if (reportText) {
-                    callback?.({ success: true, report: reportText, events, survivors, totalRounds });
-                    return;
-                }
+                try { reportText = await generateCombatReport({ events, survivors, totalRounds }); } catch (_) {}
             }
-
-            // No events or LLM failed — still succeed but with no report
-            callback?.({ success: true, report: null, events, survivors, totalRounds });
-        } catch (err) {
-            console.error('[Combat] Error ending encounter:', err.message);
-            // Still clear combat even if report fails
-            try {
-                archiveActiveCombatSession(db, currentCombatRound);
+            const resolvedCommandId = command?.commandId || command?.requestId || randomUUID();
+            const outcome = executeProcessedCommand(db, {
+                commandId: resolvedCommandId,
+                commandType: 'combat.encounter.end',
+                actorType: socket.dmAuthenticated ? 'dm' : 'player',
+                actorId: playerSocketMap.get(socket.id)?.characterId ?? null,
+                sessionId: getActiveCombatSession(db)?.id ?? null,
+                expectedCampaignVersion: command?.expectedCampaignVersion ?? null,
+                aggregates: ['campaign:combat', 'collection:initiative', 'collection:auras', 'collection:smart_pins']
+                    .map(key => ({ key, expectedVersion: command?.expectedAggregateVersions?.[key] ?? null })),
+                payload: { totalRounds, eventCount: events.length },
+            }, () => {
+                archiveActiveCombatSession(db, totalRounds);
                 endEncounter();
                 currentCombatRound = 0;
                 currentTurnIndex = 0;
                 saveCombatState();
-                broadcastCombatState();
                 clearAllAuras(db);
-                broadcastAuras();
                 clearAllSmartPins(db);
-                broadcastSmartPins();
-                broadcastInitiative();
-                broadcastPartyState();
-            } catch (_) {}
+                db.prepare(`
+                    INSERT INTO action_log (timestamp, actor, action_description, status)
+                    VALUES (datetime('now'), 'DM', '🏁 Combat has ended.', 'applied')
+                `).run();
+                return { success: true, report: reportText, events, survivors, totalRounds };
+            }, {
+                buildDelta: () => ({
+                    kind: 'combat_ended', scopes: ['party', 'initiative', 'timeline', 'action_log'], totalRounds,
+                }),
+                afterCommit: committed => broadcastStateDelta(committed),
+            });
+            callback?.({ ...outcome.result, replayed: outcome.replayed, campaignVersion: outcome.campaignVersion });
+        } catch (err) {
+            console.error('[Combat] Error ending encounter:', err.message);
             callback?.({ success: false, error: err.message });
         }
     });
@@ -2730,18 +2878,24 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('apply_party_effect', ({ effects, targets, actor }) => {
-        if (!effects || !Array.isArray(effects) || effects.length === 0) return;
-        const results = applyPartyEffect(
-            db, effects, targets || 'party',
-            actor || 'DM', currentCombatRound, currentTurnIndex, 'action', null
-        );
-        if (results.some(r => r.success)) {
-            broadcastPartyState();
-            broadcastInitiative();
-            broadcastTimeline();
-            const summary = results.filter(r => r.success).map(r => r.logMessage).join(' | ');
-            logAction(actor || 'DM', `Party effect applied — ${summary}`);
+    socket.on('apply_party_effect', (command, acknowledge) => {
+        const normalized = command?.payload ? command : {
+            ...command,
+            targets: command?.targets || 'party',
+        };
+        try {
+            const outcome = executeEffectCommand(db, normalized, {
+                actorType: socket.dmAuthenticated ? 'dm' : 'player',
+                actorId: playerSocketMap.get(socket.id)?.characterId ?? null,
+                actorName: command?.payload?.actor || command?.actor || 'DM',
+                sessionId: getActiveCombatSession(db)?.id ?? null,
+                sessionRound: currentCombatRound,
+                turnIndex: currentTurnIndex,
+            }, { afterCommit: committed => broadcastStateDelta(committed) });
+            emitCommandResult(socket, 'party_effect_result', acknowledge, outcome);
+        } catch (error) {
+            emitCommandError(socket, 'party_effect_result', acknowledge, error);
+            if (!(error instanceof CommandConflictError)) console.error('[Command] apply_party_effect failed:', error);
         }
     });
 
@@ -2896,19 +3050,34 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('end_session', async (callback) => {
+    socket.on('end_session', async (command, callback) => {
         try {
             const logs = db.prepare('SELECT * FROM action_log ORDER BY id ASC').all();
             if (logs.length === 0) return callback?.({ success: false, error: 'No actions to recap.' });
             const recapText = await generateSessionRecap(logs);
             if (!recapText) return callback?.({ success: false, error: 'Ollama failed to generate recap.' });
-            db.prepare("INSERT INTO session_recaps (recap_text, raw_log) VALUES (?, ?)").run(recapText, JSON.stringify(logs));
-            db.prepare('DELETE FROM action_log').run();
-            broadcastLogs();
-            await backupDatabase();
+            const outcome = executeProcessedCommand(db, {
+                commandId: command?.commandId || command?.requestId || randomUUID(),
+                commandType: 'campaign.session.end',
+                actorType: socket.dmAuthenticated ? 'dm' : 'player',
+                actorId: playerSocketMap.get(socket.id)?.characterId ?? null,
+                expectedCampaignVersion: command?.expectedCampaignVersion ?? null,
+                aggregates: ['collection:action_log', 'collection:session_recaps'].map(key => ({
+                    key, expectedVersion: command?.expectedAggregateVersions?.[key] ?? null,
+                })),
+                payload: { logCount: logs.length },
+            }, () => {
+                db.prepare("INSERT INTO session_recaps (recap_text, raw_log) VALUES (?, ?)").run(recapText, JSON.stringify(logs));
+                db.prepare('DELETE FROM action_log').run();
+                return { success: true, recap: recapText };
+            }, {
+                buildDelta: () => ({ kind: 'session_ended', scopes: ['action_log', 'recaps'] }),
+                afterCommit: committed => broadcastStateDelta(committed),
+            });
+            if (!outcome.replayed) await backupDatabase();
             const recaps = db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all();
-            io.emit('recaps_updated', recaps);
-            callback?.({ success: true, recap: recapText });
+            if (!outcome.replayed) io.emit('recaps_updated', recaps);
+            callback?.({ ...outcome.result, replayed: outcome.replayed, campaignVersion: outcome.campaignVersion });
         } catch (err) { console.error('[Session] Error ending session:', err.message); callback?.({ success: false, error: err.message }); }
     });
 
@@ -3141,7 +3310,25 @@ io.on('connection', (socket) => {
     // targets: Array<{ id: string|number, type: 'character'|'monster' }>
     // effects: Array<{ type: 'damage'|'heal'|'condition'|'remove_condition', value?: number, damageType?: string, condition?: string }>
     // requestId is used as group_id so all child events can be correlated in the Combat Log.
-    socket.on('apply_aoe_effect', ({ requestId, targets, effects, actor }) => {
+    socket.on('apply_aoe_effect', (command, acknowledge) => {
+        if (!socket.dmAuthenticated) { emitCommandError(socket, 'aoe_effect_result', acknowledge, new Error('DM only')); return; }
+        try {
+            const outcome = executeEffectCommand(db, command, {
+                actorType: 'dm',
+                actorId: playerSocketMap.get(socket.id)?.characterId ?? 'DM',
+                actorName: command?.payload?.actor || command?.actor || 'DM',
+                sessionId: getActiveCombatSession(db)?.id ?? null,
+                sessionRound: currentCombatRound,
+                turnIndex: currentTurnIndex,
+            }, { afterCommit: committed => broadcastStateDelta(committed) });
+            emitCommandResult(socket, 'aoe_effect_result', acknowledge, outcome);
+        } catch (error) {
+            emitCommandError(socket, 'aoe_effect_result', acknowledge, error);
+            if (!(error instanceof CommandConflictError)) console.error('[Command] apply_aoe_effect failed:', error);
+        }
+    });
+
+    socket.on('apply_aoe_effect_legacy', ({ requestId, targets, effects, actor }) => {
         if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
         if (!Array.isArray(targets) || targets.length === 0) { socket.emit('rules_error', { message: 'No targets specified' }); return; }
         if (!Array.isArray(effects) || effects.length === 0) { socket.emit('rules_error', { message: 'No effects specified' }); return; }

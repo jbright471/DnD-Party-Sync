@@ -26,6 +26,8 @@ The Vite dev server runs on `http://localhost:5173` by default. Its checked-in p
 
 - `src/App.tsx` - route layout, socket toasts, pending save/secret roll listeners
 - `src/context/GameContext.tsx` - shared party state normalization and resource permissions
+- `src/socket.ts` - contract negotiation, campaign-version tracking, and reconnect delta requests
+- `src/types/automation-contracts.ts` - v1 command, effect, provenance, statistic, and state-delta types
 - `src/pages/CharacterSheet.tsx` - primary character sheet experience
 - `src/pages/DmDashboard.tsx` - DM command center
 - `src/pages/AppGuidebook.tsx` - in-app documentation hub
@@ -59,6 +61,12 @@ Bloodied detection and modifier propagation are enabled by default. Ammunition t
 Automation and DM history requests use `dmFetch()`, which attaches the current `dm_token` as `X-DM-Token`. A new DM login rotates that token and can require other DM tabs to sign in again.
 
 The DM route validates a stored token through `/api/auth/dm/status` before rendering the command center. Missing or expired sessions show the DM PIN form instead of loading protected panels with empty error responses.
+
+## Transactional Commands and Reconnects
+
+State-changing commands retain the same UUID when retried and may include the last observed campaign version plus expected versions for every affected aggregate. The server rejects stale expectations instead of overwriting newer state. UUIDs identify retries; they do not grant permission.
+
+The socket negotiates automation contract v1 when it connects, tracks campaign and aggregate versions from `state_delta`, and requests all deltas after its last known campaign version. A `resyncRequired` response causes the server to send a fresh role-safe snapshot. New integration code should use the shared types in `src/types/automation-contracts.ts` and must not depend on transitional legacy broadcasts.
 
 ## Combat History
 

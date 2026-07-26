@@ -162,6 +162,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setParty(data.map(normaliseCharacter));
     });
 
+    socket.on('state_delta', (delta: any) => {
+      const next = delta?.state;
+      if (!next) return;
+      if (Array.isArray(next.party)) setParty(next.party.map(normaliseCharacter));
+      if (Array.isArray(next.initiative)) setInitiativeState(next.initiative);
+      if (Array.isArray(next.timeline)) setEffectEvents(next.timeline);
+      if (Array.isArray(next.actionLog)) setActionLog(next.actionLog);
+      if (next.combat && Number.isFinite(next.combat.round)) setRoundNumber(next.combat.round);
+    });
+
     socket.on('initiative_state', (data: any[]) => {
       setInitiativeState(data);
     });
@@ -255,6 +265,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
     return () => {
       socket.off('party_state');
+      socket.off('state_delta');
       socket.off('initiative_state');
       socket.off('action_logged');
       socket.off('notes_state');

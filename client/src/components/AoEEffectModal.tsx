@@ -8,6 +8,7 @@ import { Plus, Trash2, Zap, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { useGame } from '../context/GameContext';
 import { generateRequestId } from '../lib/requestId';
 import { DND_CONDITIONS } from '../types/character';
+import { createCommandEnvelope } from '../socket';
 
 const DAMAGE_TYPES = [
   'bludgeoning', 'piercing', 'slashing',
@@ -100,12 +101,14 @@ export function AoEEffectModal({ open, onClose, targets }: Props) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${dmToken || ''}`,
       },
-      body: JSON.stringify({
-        requestId: generateRequestId(),
-        targets: serverTargets,
-        effects: serverEffects,
-        actor: 'DM',
-      }),
+      body: JSON.stringify(createCommandEnvelope(
+        'effect.party.apply',
+        { targets: serverTargets, effects: serverEffects, actor: 'DM' },
+        serverTargets.map(target => target.type === 'monster'
+          ? `initiative:${target.id}`
+          : `character:${target.id}`),
+        { type: 'dm', id: 'DM' },
+      )),
     })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);

@@ -6,6 +6,7 @@ const pdfParse = require('pdf-parse');
 const db = require('../db');
 const { parseCharacterPdfLLM } = require('../ollama');
 const { validateImportDiff } = require('../lib/importValidator');
+const { executePreparedHttpMutation } = require('../lib/httpMutationBoundary');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -43,21 +44,22 @@ router.post('/', async (req, res) => {
         const isApprovalMode = approvalRow ? approvalRow.value === '1' : false;
 
         if (!isDm && (validation.requiresApproval || isApprovalMode)) {
-            const stmt = db.prepare(`
-                INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
-                VALUES (NULL, ?, ?, ?, ?)
-            `);
-            const result = stmt.run(
-                character.name,
-                url,
-                JSON.stringify(character),
-                JSON.stringify(validation)
-            );
-            
+            const outcome = executePreparedHttpMutation(db, req, {
+                aggregateKeys: ['collection:pending_imports'],
+                commandType: 'character.import.request',
+                execute: () => {
+                    const result = db.prepare(`
+                        INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
+                        VALUES (NULL, ?, ?, ?, ?)
+                    `).run(character.name, url, JSON.stringify(character), JSON.stringify(validation));
+                    return { success: true, pendingId: result.lastInsertRowid };
+                },
+                afterCommit: req.app.get('broadcastStateDelta'),
+            });
             const io = req.app.get('io');
-            if (io) {
+            if (io && !outcome.replayed) {
                 io.emit('pending_import_created', {
-                    id: result.lastInsertRowid,
+                    id: outcome.result.pendingId,
                     characterId: null,
                     playerName: character.name,
                     url,
@@ -69,21 +71,29 @@ router.post('/', async (req, res) => {
 
             return res.status(202).json({
                 status: 'pending',
-                pendingId: result.lastInsertRowid,
+                pendingId: outcome.result.pendingId,
                 diff: validation.diff,
                 flags: validation.flags
             });
         }
 
-        const newChar = insertCharacter(character);
-        
-        // Init session state
-        db.prepare(`
-          INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
-          VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
-        `).run(newChar.id, newChar.current_hp);
-
-        res.status(201).json(newChar);
+        const outcome = executePreparedHttpMutation(db, req, {
+            aggregateKeys: ['collection:characters'],
+            commandType: 'character.import.create',
+            execute: () => {
+                const newChar = insertCharacter(character);
+                db.prepare(`
+                  INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
+                  VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
+                `).run(newChar.id, newChar.current_hp);
+                return { success: true, character: newChar };
+            },
+            buildDelta: result => ({
+                kind: 'character_created', scopes: ['party'], characterId: result.character.id,
+            }),
+            afterCommit: req.app.get('broadcastStateDelta'),
+        });
+        res.status(201).json(outcome.result.character);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -114,6 +124,7 @@ router.put('/:id/sync', async (req, res) => {
         if (!response.ok) throw new Error(`D&D Beyond returned ${response.status}`);
         const json = await response.json();
         if (!json.data) throw new Error('No data in D&D Beyond response');
+        const parsed = parseCharacterData(json.data);
 
         const existing = db.prepare('SELECT * FROM characters WHERE id = ?').get(id);
         if (!existing) return res.status(404).json({ error: 'Character not found' });
@@ -126,22 +137,22 @@ router.put('/:id/sync', async (req, res) => {
         const isApprovalMode = approvalRow ? approvalRow.value === '1' : false;
 
         if (!isDm && (validation.requiresApproval || isApprovalMode)) {
-            const stmt = db.prepare(`
-                INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
-                VALUES (?, ?, ?, ?, ?)
-            `);
-            const result = stmt.run(
-                id,
-                parsed.name,
-                url,
-                JSON.stringify(parsed),
-                JSON.stringify(validation)
-            );
-            
+            const outcome = executePreparedHttpMutation(db, req, {
+                aggregateKeys: [`character:${Number(id)}`, 'collection:pending_imports'],
+                commandType: 'character.sync.request',
+                execute: () => {
+                    const result = db.prepare(`
+                        INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
+                        VALUES (?, ?, ?, ?, ?)
+                    `).run(id, parsed.name, url, JSON.stringify(parsed), JSON.stringify(validation));
+                    return { success: true, pendingId: result.lastInsertRowid };
+                },
+                afterCommit: req.app.get('broadcastStateDelta'),
+            });
             const io = req.app.get('io');
-            if (io) {
+            if (io && !outcome.replayed) {
                 io.emit('pending_import_created', {
-                    id: result.lastInsertRowid,
+                    id: outcome.result.pendingId,
                     characterId: id,
                     playerName: parsed.name,
                     url,
@@ -153,32 +164,37 @@ router.put('/:id/sync', async (req, res) => {
 
             return res.status(202).json({
                 status: 'pending',
-                pendingId: result.lastInsertRowid,
+                pendingId: outcome.result.pendingId,
                 diff: validation.diff,
                 flags: validation.flags
             });
         }
         
-        db.prepare(`
-            UPDATE characters SET
-                name = ?, class = ?, level = ?, max_hp = ?, ac = ?,
-                stats = ?, skills = ?, features = ?, features_traits = ?,
-                inventory = ?, spells = ?, backstory = ?,
-                raw_dndbeyond_json = ?, data_json = ?,
-                skill_proficiencies = ?, save_proficiencies = ?, attacks = ?
-            WHERE id = ?
-        `).run(
-            parsed.name, parsed.class, parsed.level, parsed.maxHp, parsed.ac,
-            parsed.stats, parsed.skills, parsed.features, parsed.features_traits,
-            parsed.inventory, parsed.spells, parsed.backstory,
-            parsed.raw_dndbeyond_json, parsed.data_json,
-            parsed.skill_proficiencies || '{}',
-            parsed.save_proficiencies  || '{}',
-            parsed.attacks             || '[]',
-            id
-        );
-
-        res.json({ success: true });
+        const outcome = executePreparedHttpMutation(db, req, {
+            aggregateKeys: [`character:${Number(id)}`],
+            commandType: 'character.sync.apply',
+            execute: () => {
+                db.prepare(`
+                    UPDATE characters SET
+                        name = ?, class = ?, level = ?, max_hp = ?, ac = ?,
+                        stats = ?, skills = ?, features = ?, features_traits = ?,
+                        inventory = ?, spells = ?, backstory = ?,
+                        raw_dndbeyond_json = ?, data_json = ?,
+                        skill_proficiencies = ?, save_proficiencies = ?, attacks = ?
+                    WHERE id = ?
+                `).run(
+                    parsed.name, parsed.class, parsed.level, parsed.maxHp, parsed.ac,
+                    parsed.stats, parsed.skills, parsed.features, parsed.features_traits,
+                    parsed.inventory, parsed.spells, parsed.backstory,
+                    parsed.raw_dndbeyond_json, parsed.data_json,
+                    parsed.skill_proficiencies || '{}', parsed.save_proficiencies || '{}',
+                    parsed.attacks || '[]', id
+                );
+                return { success: true };
+            },
+            afterCommit: req.app.get('broadcastStateDelta'),
+        });
+        res.json({ success: true, replayed: outcome.replayed });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -225,20 +241,22 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
         const isApprovalMode = approvalRow ? approvalRow.value === '1' : false;
 
         if (!isDm && (validation.requiresApproval || isApprovalMode)) {
-            const stmt = db.prepare(`
-                INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
-                VALUES (NULL, ?, 'PDF Upload', ?, ?)
-            `);
-            const result = stmt.run(
-                charObj.name,
-                JSON.stringify(charObj),
-                JSON.stringify(validation)
-            );
-            
+            const outcome = executePreparedHttpMutation(db, req, {
+                aggregateKeys: ['collection:pending_imports'],
+                commandType: 'character.pdf_import.request',
+                execute: () => {
+                    const result = db.prepare(`
+                        INSERT INTO pending_imports (character_id, player_name, url, incoming_data_json, diff_json)
+                        VALUES (NULL, ?, 'PDF Upload', ?, ?)
+                    `).run(charObj.name, JSON.stringify(charObj), JSON.stringify(validation));
+                    return { success: true, pendingId: result.lastInsertRowid };
+                },
+                afterCommit: req.app.get('broadcastStateDelta'),
+            });
             const io = req.app.get('io');
-            if (io) {
+            if (io && !outcome.replayed) {
                 io.emit('pending_import_created', {
-                    id: result.lastInsertRowid,
+                    id: outcome.result.pendingId,
                     characterId: null,
                     playerName: charObj.name,
                     url: 'PDF Upload',
@@ -250,19 +268,27 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
 
             return res.status(202).json({
                 status: 'pending',
-                pendingId: result.lastInsertRowid,
+                pendingId: outcome.result.pendingId,
                 diff: validation.diff,
                 flags: validation.flags
             });
         }
 
-        const newChar = insertCharacter(charObj);
-        db.prepare(`
-          INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
-          VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
-        `).run(newChar.id, newChar.current_hp);
-
-        res.status(201).json(newChar);
+        const outcome = executePreparedHttpMutation(db, req, {
+            aggregateKeys: ['collection:characters'],
+            commandType: 'character.pdf_import.create',
+            execute: () => {
+                const newChar = insertCharacter(charObj);
+                db.prepare(`
+                  INSERT INTO session_states (character_id, current_hp, temp_hp, death_saves_json, conditions_json, buffs_json, concentrating_on, slots_used_json, hd_used_json, feature_uses_json, active_features_json)
+                  VALUES (?, ?, 0, '{"successes":0,"failures":0}', '[]', '[]', NULL, '{}', '{}', '{}', '[]')
+                `).run(newChar.id, newChar.current_hp);
+                return { success: true, character: newChar };
+            },
+            buildDelta: result => ({ kind: 'character_created', scopes: ['party'], characterId: result.character.id }),
+            afterCommit: req.app.get('broadcastStateDelta'),
+        });
+        res.status(201).json(outcome.result.character);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

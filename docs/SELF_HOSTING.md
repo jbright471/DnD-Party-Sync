@@ -75,7 +75,7 @@ The active database is whichever file `DB_PATH` resolves to. Before upgrading:
 3. Copy the database to a dated backup outside the application working tree.
 4. Verify the backup opens with SQLite before changing the deployment.
 
-Arcane Ally runs schema migrations during backend startup. Keep the pre-upgrade database until the new version has been exercised successfully.
+Arcane Ally runs schema migrations during backend startup. The transactional command release adds command receipts, aggregate versions, a campaign clock, command-to-aggregate records, general audit events, and retained state deltas. Keep the pre-upgrade database until the new version has been exercised successfully.
 
 ## Upgrade Checklist
 
@@ -85,9 +85,11 @@ Arcane Ally runs schema migrations during backend startup. Keep the pre-upgrade 
 4. Run server tests/lint and the client lint/build.
 5. Restart the backend and frontend services.
 6. Confirm `/api/health` returns `200`.
-7. Confirm anonymous DM history requests return `401` and a fresh DM login can load Automation and Combat Timeline.
-8. Confirm a normal map image uploads successfully within `JSON_BODY_LIMIT`.
-9. Confirm the repository lockfiles remain unchanged after service restart.
+7. Confirm `/api/v1/contracts` reports contract `1.0.0`, and `/api/v1/contracts/state/version` returns the campaign and aggregate versions.
+8. Reconnect a client and confirm it catches up through deltas or receives a fresh projected snapshot when `resyncRequired` is true.
+9. Confirm anonymous DM history requests return `401` and a fresh DM login can load Automation and Combat Timeline.
+10. Confirm a normal map image uploads successfully within `JSON_BODY_LIMIT`.
+11. Confirm the repository lockfiles remain unchanged after service restart.
 
 ## Remote Access
 

@@ -22,6 +22,9 @@ flowchart LR
 | Routes | `client/src/App.tsx` | Browser routes and application shell |
 | Shared client state | `client/src/context/GameContext.tsx` | Socket lifecycle, normalized party state, DM token |
 | Backend | `server/server.js` | Express routes, Socket.io handlers, broadcasts |
+| Contract registry | `server/lib/automationContractRegistry.js` | Stable schemas, capabilities, validation, and version negotiation |
+| Transaction orchestrator | `server/lib/processedCommands.js` | Idempotency, optimistic versions, audit records, and reconnect deltas |
+| Transactional effects | `server/services/transactionalEffects.js` | All-or-nothing cross-character effect execution |
 | Schema | `server/schema.js` | Startup migrations and seed defaults |
 | Database | `server/db.js` | Better-SQLite3 connection and WAL mode |
 
@@ -36,22 +39,34 @@ Arcane Ally separates permanent character data from table-session state.
 - `combat_sessions` groups live and archived encounter events.
 - `campaign_state` stores server-wide settings such as automation policies and the current DM session token.
 - `processed_commands` stores command fingerprints and results for deterministic retries.
-- `aggregate_versions` stores optimistic versions for protected state aggregates.
+- `aggregate_versions` stores optimistic versions for affected state aggregates.
+- `campaign_clock` provides a total order across committed campaign mutations.
+- `command_aggregates` records every aggregate and before/after version touched by a command.
+- `command_audit_events` stores the general command-level provenance record.
+- `state_deltas` stores the ordered reconnect stream.
 
 Character resolution happens in `server/lib/rulesIntegration.js` and `server/lib/rulesEngine.js`, which combine the base sheet, session state, equipment, conditions, auras, and enabled automation policies.
 
 ## Real-Time Mutation Flow
 
-1. A client emits a command or sends an API request.
-2. The server validates the request and applies rules.
-3. SQLite is mutated inside the relevant transaction boundary.
-4. An audit/timeline event is written when the action is traceable.
-5. The server projects state for the receiving role.
-6. Socket.io broadcasts the projected state to connected clients.
+1. A client emits a command envelope or sends a state-changing API request.
+2. The REST or Socket.io boundary derives the command UUID, affected aggregates, actor, and expected versions.
+3. The orchestrator checks for a prior receipt and validates the campaign and aggregate versions.
+4. Rules calculate every target change before the final write. Multi-target effects reject the whole command if any target is invalid.
+5. One SQLite `IMMEDIATE` transaction commits the mutations, command receipt, aggregate versions, campaign clock, audit event, and reconnect delta.
+6. After commit, the server emits one canonical role-projected `state_delta`. Identical retries return the stored result without repeating the mutation or post-commit delivery.
 
-For migrated high-risk commands, steps 2 through 4 and the command receipt are one immediate SQLite transaction. A retry with the same command ID and payload receives the stored result. Reusing that ID with a different payload is rejected.
+Synchronous mutation handlers use compatibility middleware so existing REST routes and Socket.io events receive the same guarantees without changing their current payloads immediately. Work that calls D&D Beyond, Ollama, PDF parsing, report generation, or backup services completes that slow calculation first and places only its final database writes inside an explicit transaction boundary.
 
-Clients do not authoritatively merge campaign mutations. They normalize the server payload and render the resulting state.
+Legacy domain broadcasts remain during client migration, but `state_delta` is the stable automation and reconnect contract. A UUID proves retry identity, not caller authority.
+
+Clients do not authoritatively merge campaign mutations. They normalize the server payload, retain the latest campaign and aggregate versions, and render the resulting state. On reconnect they request deltas after the last observed campaign version; a retention gap triggers a full role-safe snapshot.
+
+## Automation Contract Registry
+
+The v1 registry is mounted at `/api/v1/contracts`. It publishes JSON Schemas for command envelopes, active effects, provenance entries, calculated statistics, and state deltas, plus stable capability names for effects and automation hooks. Clients negotiate with `POST /api/v1/contracts/negotiate` or the `negotiate_automation_contract` socket event.
+
+Stable v1 fields can only change compatibly. Experimental values live under `extensions` using `x-`-prefixed keys. See [Automation Contracts v1](./AUTOMATION_CONTRACTS.md) and [ADR-001](./architecture/ADR-001-transactional-command-orchestrator.md).
 
 ## Role-Safe Projection
 
@@ -91,6 +106,7 @@ client/                 React application
   src/pages/            Route-level views and Arcane Codex
 server/                 Express and Socket.io backend
   lib/                  Rules, projections, auth, policy helpers
+  contracts/v1/         Published JSON Schemas
   routes/               REST route modules
   services/             Effect, retention, and combat services
   test/                 Vitest coverage

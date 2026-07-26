@@ -16,6 +16,8 @@ Arcane Ally is designed for a trusted home or table network. It does not current
 
 The DM PIN and session token protect selected DM workflows. Role-safe socket projections prevent hidden combat information from being broadcast to the wrong view. Neither mechanism replaces network-level access control.
 
+Transactional command UUIDs prevent accidental duplicate execution and version checks reject stale writes. They are not secrets, authentication credentials, replay-protection against an unauthorized network client, or substitutes for route authorization. Do not expose the contract state endpoints as though they were an identity boundary.
+
 ## Safe Deployment Checklist
 
 - Replace the sample `DM_PIN` before inviting players.

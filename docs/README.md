@@ -18,6 +18,8 @@ Use the in-app **Arcane Codex** at `/guide` for player and DM workflows. The fil
 ## For Contributors
 
 - [Architecture](./ARCHITECTURE.md)
+- [Automation Contracts v1](./AUTOMATION_CONTRACTS.md)
+- [ADR-001: Transactional Command Orchestrator](./architecture/ADR-001-transactional-command-orchestrator.md)
 - [Client Guide](../client/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)

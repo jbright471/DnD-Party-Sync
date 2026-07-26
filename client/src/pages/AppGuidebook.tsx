@@ -559,14 +559,14 @@ If your connection drops, HP changes can queue locally. When you reconnect, Arca
     icon: Shield,
     content: `# Safe Retries & Duplicate Protection
 
-Arcane Ally protects important actions from running twice when Wi-Fi drops or a browser reconnects.
+Arcane Ally protects state-changing actions from running twice when Wi-Fi drops or a browser reconnects.
 
 ## What You Need to Do
 
 Nothing special. Click an action once and let Arcane Ally handle delivery.
 
-1. Your browser gives the action a unique command ID.
-2. The server saves the game change and its result together.
+1. Your browser gives the action a unique command ID and remembers the campaign version it saw.
+2. The server checks whether the campaign or affected targets changed, then saves the game change, audit record, and result together.
 3. If the browser retries that same command, the server returns the saved result instead of applying it again.
 4. If an old command ID arrives with different details, the server rejects it.
 
@@ -574,13 +574,11 @@ Nothing special. Click an action once and let Arcane Ally handle delivery.
 
 ## Actions Protected Now
 
-- Damage, healing, and temporary HP
-- Spell slots, spell casting, and concentration
-- Conditions and buffs
-- Hit dice, short rests, and long rests
-- Party-loot claims
+The shared safety boundary covers state-changing REST requests and registered real-time commands, including character resources, effects, combat, initiative, maps, notes, loot, voting, permissions, automation, homebrew, and world changes.
 
-The DM's Effect Timeline and Action Log are written in the same transaction as these changes. You will not get a state change with a missing audit entry, or an audit entry for a rolled-back change.
+The DM's Effect Timeline, Action Log, command result, and reconnect update are written in the same transaction as these changes. Multi-target effects apply to everyone or roll back completely. You will not get a state change with a missing audit entry, or an audit entry for a rolled-back change.
+
+When a browser reconnects, it asks for updates after the last campaign version it received. If those updates are no longer retained, the server sends a fresh player-safe or DM-safe snapshot.
 
 ## Offline HP
 
@@ -849,7 +847,7 @@ To apply an effect to multiple combatants at once:
 4. Add one or more effect rows: **Damage** (value + type), **Heal**, or **Condition**
 5. Click **Apply** — this invokes the secure POST \`/api/v1/effects/bulk-apply\` REST API, passing the DM Authorization token header.
 
-The server validates the requested targets, applies the effect set in a database transaction, and reports a result for each target. All events from the same AoE share a **group ID** in the Effect Timeline, which supports a grouped undo.
+The server validates every requested target, checks campaign and target versions, and applies the entire effect set in one database transaction. If any target fails, nobody is changed. All events from the same AoE share a **group ID** in the Effect Timeline, which supports a grouped undo.
 
 ## Quick Actions (DM)
 
@@ -998,7 +996,7 @@ Click any cell to activate it. Unavailable combinations (e.g. "Approval" for a b
 
 ## Safe Command Delivery
 
-See **Safe Retries & Duplicate Protection** under Core Mechanics for the protected action list, offline HP behavior, and what happens when an acknowledgement is lost. Coverage is intentionally listed there instead of implying every older administrative action has already been migrated.
+See **Safe Retries & Duplicate Protection** under Core Mechanics for universal mutation safety, offline HP behavior, version conflicts, and reconnect recovery.
 
 ## Event Reversal
 

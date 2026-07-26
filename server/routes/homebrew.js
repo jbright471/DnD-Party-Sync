@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { generateHomebrewStats, parseItemDescriptionLLM, parseManualItemLLM } = require('../ollama');
+const { executePreparedHttpMutation } = require('../lib/httpMutationBoundary');
 
 // GET /api/homebrew — list all homebrew entities
 router.get('/', (req, res) => {
@@ -72,12 +73,26 @@ router.post('/', async (req, res) => {
             }
         }
 
-        const result = db.prepare(
-            'INSERT INTO homebrew_entities (entity_type, name, description, stats_json) VALUES (?, ?, ?, ?)'
-        ).run(entity_type, name, description || '', JSON.stringify(finalStats));
-
-        const entity = db.prepare('SELECT * FROM homebrew_entities WHERE id = ?').get(result.lastInsertRowid);
-        res.status(201).json({ ...entity, stats_json: JSON.parse(entity.stats_json) });
+        const outcome = executePreparedHttpMutation(db, req, {
+            aggregateKeys: ['collection:homebrew'],
+            commandType: 'homebrew.entity.create',
+            execute: () => {
+                const result = db.prepare(
+                    'INSERT INTO homebrew_entities (entity_type, name, description, stats_json) VALUES (?, ?, ?, ?)'
+                ).run(entity_type, name, description || '', JSON.stringify(finalStats));
+                const entity = db.prepare('SELECT * FROM homebrew_entities WHERE id = ?').get(result.lastInsertRowid);
+                return { success: true, entity: { ...entity, stats_json: JSON.parse(entity.stats_json) } };
+            },
+            buildDelta: result => ({
+                kind: 'homebrew_entity_created',
+                scopes: ['homebrew'],
+                entityId: result.entity.id,
+            }),
+            afterCommit: req.app.get('broadcastStateDelta'),
+        });
+        res.setHeader('X-Command-ID', outcome.commandId);
+        res.setHeader('X-Campaign-Version', String(outcome.campaignVersion));
+        res.status(201).json(outcome.result.entity);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
