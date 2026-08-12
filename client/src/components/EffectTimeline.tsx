@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Clock, Trash2, Download, ChevronDown, ChevronUp, Zap, RotateCcw, History } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -248,6 +248,10 @@ function AoEGroupRow({ groupId, events, isDm, isExpanded, onToggle }: {
 export function EffectTimeline() {
   const { state } = useGame();
   const isDm = state.isDm;
+  const fetchTimeline = useCallback(
+    (url: string) => fetch(url, state.dmToken ? { headers: { 'X-DM-Token': state.dmToken } } : undefined),
+    [state.dmToken],
+  );
 
   const [events, setEvents] = useState<EffectEvent[]>([]);
   const [sessions, setSessions] = useState<CombatSession[]>([]);
@@ -264,7 +268,7 @@ export function EffectTimeline() {
     const timelineUrl = selectedSessionId === 'live'
       ? `/api/effect-timeline?limit=${TIMELINE_PAGE_SIZE}`
       : `/api/effect-timeline?sessionId=${selectedSessionId}&limit=${TIMELINE_PAGE_SIZE}`;
-    fetch(timelineUrl)
+    fetchTimeline(timelineUrl)
       .then(r => r.json())
       .then((data: EffectEvent[]) => {
         setEvents(data);
@@ -293,7 +297,7 @@ export function EffectTimeline() {
       socket.off('timeline_update', onTimelineUpdate);
       socket.off('rules_error');
     };
-  }, [selectedSessionId]);
+  }, [selectedSessionId, fetchTimeline]);
 
   // Auto-scroll to bottom when new events arrive and panel is open
   useEffect(() => {
@@ -334,7 +338,7 @@ export function EffectTimeline() {
     const params = new URLSearchParams({ beforeId: String(events[0].id), limit: String(TIMELINE_PAGE_SIZE) });
     if (selectedSessionId !== 'live') params.set('sessionId', String(selectedSessionId));
     try {
-      const older: EffectEvent[] = await fetch(`/api/effect-timeline?${params}`).then(r => r.json());
+      const older: EffectEvent[] = await fetchTimeline(`/api/effect-timeline?${params}`).then(r => r.json());
       setEvents(current => [...older, ...current]);
       setHasEarlierEvents(older.length === TIMELINE_PAGE_SIZE);
     } catch { /* keep the visible page */ }
@@ -350,7 +354,7 @@ export function EffectTimeline() {
         const params = new URLSearchParams({ limit: String(EXPORT_PAGE_SIZE) });
         if (selectedSessionId !== 'live') params.set('sessionId', String(selectedSessionId));
         if (beforeId !== undefined) params.set('beforeId', String(beforeId));
-        page = await fetch(`/api/effect-timeline?${params}`).then(r => r.json());
+        page = await fetchTimeline(`/api/effect-timeline?${params}`).then(r => r.json());
         exportedEvents = [...page, ...exportedEvents];
         beforeId = page[0]?.id;
       } while (page.length === EXPORT_PAGE_SIZE && beforeId !== undefined);

@@ -19,6 +19,7 @@ const {
     getCharacterData,
 } = require('../../lib/rulesIntegration');
 const { getAutomationRules } = require('../../lib/automationRules');
+const crypto = require('crypto');
 
 const REACTION_DEPTH_LIMIT = 2;
 
@@ -63,7 +64,14 @@ function applyToCharacter(db, targetId, effect) {
         case 'remove_condition':
             return { result: removeConditionEvent(db, targetId, effect.condition), eventType: 'condition_removed' };
         case 'buff':
-            return { result: applyBuffEvent(db, targetId, effect.buffData), eventType: 'buff_applied' };
+            return {
+                result: applyBuffEvent(db, targetId, {
+                    ...(effect.buffData || {}),
+                    sourceCharacterId: effect.sourceCharacterId ?? effect.buffData?.sourceCharacterId,
+                    concentrationId: effect.concentrationId ?? effect.buffData?.concentrationId,
+                }),
+                eventType: 'buff_applied',
+            };
         default:
             return { result: { success: false, error: `Unknown effect type: ${effect.type}` }, eventType: 'unknown' };
     }
@@ -92,12 +100,37 @@ function applyToMonster(db, trackerId, effect) {
                 eventType: 'heal',
             };
         }
-        // Conditions and buffs are not tracked for monsters in the current schema.
-        // Log a record but return early.
-        case 'condition':
-            return { result: { success: true, logMessage: `${entity.entity_name}: ${effect.condition} (noted)` }, eventType: 'condition_applied' };
-        case 'remove_condition':
-            return { result: { success: true, logMessage: `${entity.entity_name}: ${effect.condition} removed (noted)` }, eventType: 'condition_removed' };
+        case 'condition': {
+            let conditions;
+            try { conditions = JSON.parse(entity.conditions_json || '[]'); } catch { conditions = []; }
+            const normalized = String(effect.condition || '').trim().toLowerCase();
+            if (normalized && !conditions.includes(normalized)) conditions.push(normalized);
+            db.prepare('UPDATE initiative_tracker SET conditions_json = ? WHERE id = ?').run(JSON.stringify(conditions), trackerId);
+            return { result: { success: true, logMessage: `${entity.entity_name}: ${normalized} applied` }, eventType: 'condition_applied' };
+        }
+        case 'remove_condition': {
+            let conditions;
+            try { conditions = JSON.parse(entity.conditions_json || '[]'); } catch { conditions = []; }
+            const normalized = String(effect.condition || '').trim().toLowerCase();
+            conditions = conditions.filter(condition => condition !== normalized);
+            db.prepare('UPDATE initiative_tracker SET conditions_json = ? WHERE id = ?').run(JSON.stringify(conditions), trackerId);
+            return { result: { success: true, logMessage: `${entity.entity_name}: ${normalized} removed` }, eventType: 'condition_removed' };
+        }
+        case 'buff': {
+            let buffs;
+            try { buffs = JSON.parse(entity.buffs_json || '[]'); } catch { buffs = []; }
+            const buffData = effect.buffData || {};
+            buffs.push({
+                ...buffData,
+                id: crypto.randomUUID(),
+                name: buffData.name || 'Effect',
+                sourceCharacterId: effect.sourceCharacterId ?? buffData.sourceCharacterId ?? null,
+                concentrationId: effect.concentrationId ?? buffData.concentrationId ?? null,
+                timestamp: new Date().toISOString(),
+            });
+            db.prepare('UPDATE initiative_tracker SET buffs_json = ? WHERE id = ?').run(JSON.stringify(buffs), trackerId);
+            return { result: { success: true, logMessage: `${buffData.name || 'Effect'} applied to ${entity.entity_name}` }, eventType: 'buff_applied' };
+        }
         default:
             return { result: { success: false, error: `Effect type '${effect.type}' unsupported for monsters` }, eventType: 'unknown' };
     }

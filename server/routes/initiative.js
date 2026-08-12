@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const crypto = require('crypto');
+const { normalizeBossPhases } = require('../services/bossPhases');
+const { projectInitiativeState } = require('../lib/clientStateProjection');
+const { getPermissions } = require('../lib/permissions');
 
 // ---- Encounters CRUD ----
 
@@ -128,26 +131,38 @@ router.post('/:id/duplicate', (req, res) => {
 
 router.get('/tracker', (req, res) => {
     try {
-        res.json(getTrackerState());
+        res.json(projectInitiativeState(getTrackerState(), {
+            role: 'public',
+            permissions: getPermissions(db),
+        }));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 function spawnMonster(monsterData) {
-    const { name, hp, ac, initiative_mod, is_hidden, stats } = monsterData;
+    const { name, hp, ac, initiative_mod, is_hidden, stats, phases } = monsterData;
 
     // Roll initiative: d20 + modifier
     const initRoll = Math.floor(Math.random() * 20) + 1 + (initiative_mod || 0);
     const instanceId = crypto.randomUUID();
     const statsJson = stats ? JSON.stringify(stats) : null;
+    const bossPhases = normalizeBossPhases(phases, { maxHp: hp || 10, ac: ac || 10 });
 
     const insertStmt = db.prepare(`
-        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, instance_id, stats_json)
-        VALUES (?, 'monster', ?, ?, ?, ?, 0, ?, 0, ?, ?)
+        INSERT INTO initiative_tracker (
+            entity_name, entity_type, initiative, current_hp, max_hp, ac,
+            is_active, is_hidden, sort_order, instance_id, stats_json,
+            boss_phases_json, current_phase_index, phase_name
+        )
+        VALUES (?, 'monster', ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, 0, ?)
     `);
 
-    insertStmt.run(name, initRoll, hp || 10, hp || 10, ac || 10, is_hidden ? 1 : 0, instanceId, statsJson);
+    insertStmt.run(
+        name, initRoll, hp || 10, hp || 10, ac || 10,
+        is_hidden ? 1 : 0, instanceId, statsJson,
+        JSON.stringify(bossPhases), bossPhases[0]?.name || null,
+    );
 
     resortTracker();
     return getTrackerState();
@@ -161,8 +176,12 @@ function startEncounter(encounterId, partyCharacters) {
 
     const monsters = JSON.parse(encounter.monsters);
     const insertStmt = db.prepare(`
-        INSERT INTO initiative_tracker (entity_name, entity_type, initiative, current_hp, max_hp, ac, is_active, is_hidden, sort_order, character_id, encounter_id, instance_id)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+        INSERT INTO initiative_tracker (
+            entity_name, entity_type, initiative, current_hp, max_hp, ac,
+            is_active, is_hidden, sort_order, character_id, encounter_id, instance_id,
+            stats_json, boss_phases_json, current_phase_index, phase_name
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     `);
 
     let sortOrder = 0;
@@ -180,11 +199,14 @@ function startEncounter(encounterId, partyCharacters) {
 
             const initRoll = Math.floor(Math.random() * 20) + 1 + (monster.initiative_mod || 0);
             const instanceId = crypto.randomUUID();
+            const bossPhases = normalizeBossPhases(monster.phases, { maxHp: monster.hp || 10, ac: monster.ac || 10 });
 
             insertStmt.run(
                 displayName, 'monster', initRoll,
                 monster.hp || 10, monster.hp || 10, monster.ac || 10,
-                0, sortOrder++, null, encounterId, instanceId
+                monster.is_hidden ? 1 : 0, sortOrder++, null, encounterId, instanceId,
+                monster.stats ? JSON.stringify(monster.stats) : null,
+                JSON.stringify(bossPhases), bossPhases[0]?.name || null,
             );
         }
     }
@@ -193,7 +215,8 @@ function startEncounter(encounterId, partyCharacters) {
         insertStmt.run(
             pc.name, 'pc', 0,
             pc.current_hp, pc.max_hp, pc.ac,
-            0, sortOrder++, pc.id, encounterId, crypto.randomUUID()
+            0, sortOrder++, pc.id, encounterId, crypto.randomUUID(),
+            null, '[]', null,
         );
     }
 
@@ -232,26 +255,35 @@ function getTrackerState() {
     const tracker = db.prepare('SELECT * FROM initiative_tracker ORDER BY sort_order ASC').all();
     return tracker.map(entity => {
         let conditions = [];
+        let buffs = [];
         let concentrating_on = null;
 
         if (entity.character_id) {
             const session = db.prepare(
-                'SELECT conditions_json, concentrating_on FROM session_states WHERE character_id = ?'
+                'SELECT conditions_json, buffs_json, concentrating_on FROM session_states WHERE character_id = ?'
             ).get(entity.character_id);
             conditions = JSON.parse(session?.conditions_json ?? '[]');
+            buffs = JSON.parse(session?.buffs_json ?? '[]');
             concentrating_on = session?.concentrating_on ?? null;
+        } else {
+            try { conditions = JSON.parse(entity.conditions_json || '[]'); } catch (_e) { conditions = []; }
+            try { buffs = JSON.parse(entity.buffs_json || '[]'); } catch (_e) { buffs = []; }
         }
 
         let parsedStats = null;
         if (entity.stats_json) {
             try { parsedStats = JSON.parse(entity.stats_json); } catch (_e) {}
         }
+        let bossPhases = [];
+        try { bossPhases = JSON.parse(entity.boss_phases_json || '[]'); } catch (_e) {}
 
         return {
             ...entity,
             conditions,
+            buffs,
             concentrating_on,
             stats_json: parsedStats,
+            boss_phases: bossPhases,
             // HP Ghosting: if hidden or monster, we can flag it for the frontend to obscure
             hp_status: entity.current_hp <= 0 ? 'Dead' :
                        (entity.current_hp / entity.max_hp <= 0.25) ? 'Critical' :

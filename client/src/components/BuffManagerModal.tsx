@@ -30,6 +30,7 @@ export function BuffManagerModal({ open, onClose }: BuffManagerModalProps) {
   const [selectedBuff, setSelectedBuff] = useState(PRESET_BUFFS[0]);
   const [customName, setCustomName] = useState('');
   const [isConcentration, setIsConcentration] = useState(true);
+  const [sourceCharacterId, setSourceCharacterId] = useState('');
 
   const toggleTarget = (id: string) => {
     setSelectedTargets(prev =>
@@ -39,10 +40,12 @@ export function BuffManagerModal({ open, onClose }: BuffManagerModalProps) {
 
   const handleApply = () => {
     if (selectedTargets.length === 0) return;
+    const sourceCharacter = party.find(character => character.id === sourceCharacterId);
     const buffData = {
       name: customName || selectedBuff?.name,
       isConcentration,
-      sourceName: 'DM',
+      sourceName: sourceCharacter?.name || 'DM',
+      sourceCharacterId: isConcentration && sourceCharacterId ? Number(sourceCharacterId) : null,
       stat: 'ATK',
       modifier: 2,
       source: 'DM'
@@ -127,6 +130,17 @@ export function BuffManagerModal({ open, onClose }: BuffManagerModalProps) {
             <Label htmlFor="concentration" className="text-xs uppercase tracking-tight cursor-pointer">
               Requires Concentration
             </Label>
+            {isConcentration && (
+              <select
+                value={sourceCharacterId}
+                onChange={event => setSourceCharacterId(event.target.value)}
+                className="ml-auto h-8 rounded-md border border-input bg-background px-2 text-xs"
+                aria-label="Concentrating character"
+              >
+                <option value="">DM managed</option>
+                {party.map(character => <option key={character.id} value={character.id}>{character.name}</option>)}
+              </select>
+            )}
           </div>
 
           <Button

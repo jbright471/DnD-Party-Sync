@@ -6,23 +6,27 @@ import socket from '../socket';
 import { type Character } from '../types/character';
 
 interface Combatant {
-  characterId: string;
-  name: string;
+  id: number;
+  character_id: number | null;
+  entity_name: string;
+  entity_type: 'pc' | 'monster' | 'npc';
   initiative: number;
-  dexterity: number;
+  current_hp: number | null;
+  max_hp: number | null;
+  hp_status: string;
+  is_active: number;
 }
 
-interface InitiativeState {
-  active: boolean;
-  combatants: Combatant[];
-  currentTurnIndex: number;
+interface CombatState {
   round: number;
+  turnIndex: number;
 }
 
 export default function EncounterCastView() {
   const { id } = useParams<{ id: string }>();
   const [party, setParty] = useState<Character[]>([]);
-  const [initiative, setInitiative] = useState<InitiativeState | null>(null);
+  const [initiative, setInitiative] = useState<Combatant[]>([]);
+  const [combatState, setCombatState] = useState<CombatState>({ round: 0, turnIndex: 0 });
   const [isConnected, setIsConnected] = useState(socket.connected);
 
   useEffect(() => {
@@ -45,28 +49,34 @@ export default function EncounterCastView() {
       } as Character)));
     };
 
-    const onInitiativeState = (state: InitiativeState) => setInitiative(state);
-    const onConnect = () => setIsConnected(true);
+    const onInitiativeState = (state: Combatant[]) => setInitiative(Array.isArray(state) ? state : []);
+    const onCombatState = (state: CombatState) => setCombatState(state);
+    const registerCastView = () => socket.emit('register_cast_view', { encounterId: id });
+    const onConnect = () => {
+      setIsConnected(true);
+      registerCastView();
+    };
     const onDisconnect = () => setIsConnected(false);
 
     socket.on('party_state', onPartyState);
     socket.on('initiative_state', onInitiativeState);
+    socket.on('combat_state_sync', onCombatState);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
 
-    // Initial fetch via emitting event or it gets pushed
-    socket.emit('request_full_sync');
+    registerCastView();
 
     return () => {
       socket.off('party_state', onPartyState);
       socket.off('initiative_state', onInitiativeState);
+      socket.off('combat_state_sync', onCombatState);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
     };
   }, [id]);
 
-  const activeCombatants = initiative?.active ? initiative.combatants : [];
-  const currentTurnIndex = initiative?.currentTurnIndex ?? 0;
+  const activeCombatants = initiative;
+  const currentTurnIndex = initiative.findIndex(combatant => combatant.is_active === 1);
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-red-900 overflow-hidden flex flex-col">
@@ -80,9 +90,9 @@ export default function EncounterCastView() {
           </h1>
         </div>
         <div className="flex items-center gap-6 z-10 font-display">
-          {initiative?.active && (
+          {initiative.length > 0 && combatState.round > 0 && (
             <div className="text-red-400 text-lg flex items-center gap-2 animate-pulse">
-              <Zap className="h-5 w-5" /> ROUND {initiative.round}
+              <Zap className="h-5 w-5" /> ROUND {combatState.round}
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -101,16 +111,18 @@ export default function EncounterCastView() {
           <h2 className="text-sm font-display uppercase tracking-[0.3em] text-red-500/80 mb-6 flex items-center gap-2">
             <Zap className="h-4 w-4" /> Initiative Order
           </h2>
-          {initiative?.active ? (
+          {initiative.length > 0 ? (
             <div className="space-y-3">
               {activeCombatants.map((combatant, idx) => {
                 const isCurrentTurn = idx === currentTurnIndex;
-                const char = party.find(p => p.id === combatant.characterId);
-                const isDead = char && char.hp.current <= 0;
+                const char = party.find(p => p.id === String(combatant.character_id));
+                const isDead = combatant.entity_type === 'pc'
+                  ? Boolean(char && char.hp.current <= 0)
+                  : combatant.hp_status === 'Dead';
                 
                 return (
                   <div 
-                    key={combatant.characterId} 
+                    key={combatant.id}
                     className={`p-4 rounded-lg border transition-all duration-500 ${isCurrentTurn ? 'bg-red-950/40 border-red-500/50 scale-105 shadow-[0_0_20px_rgba(220,38,38,0.2)]' : 'bg-neutral-900/40 border-white/10 opacity-70'} ${isDead ? 'opacity-30 grayscale' : ''}`}
                   >
                     <div className="flex items-center justify-between">
@@ -119,10 +131,15 @@ export default function EncounterCastView() {
                           {combatant.initiative}
                         </div>
                         <span className={`font-display text-lg ${isCurrentTurn ? 'text-red-50' : 'text-white/80'} ${isDead ? 'line-through' : ''}`}>
-                          {combatant.name}
+                          {combatant.entity_name}
                         </span>
                       </div>
-                      {isCurrentTurn && <div className="w-2 h-2 rounded-full bg-red-500 animate-ping"></div>}
+                      <div className="flex items-center gap-2">
+                        {combatant.entity_type !== 'pc' && (
+                          <span className="text-[9px] uppercase tracking-wider text-white/40">{combatant.hp_status}</span>
+                        )}
+                        {isCurrentTurn && <div className="w-2 h-2 rounded-full bg-red-500 animate-ping"></div>}
+                      </div>
                     </div>
                   </div>
                 );

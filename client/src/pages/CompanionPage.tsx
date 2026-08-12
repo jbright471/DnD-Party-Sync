@@ -205,7 +205,7 @@ export default function CompanionPage() {
     socket.on('disconnect', onDisconnect);
 
     // Request initial state
-    socket.emit('request_party_state');
+    socket.emit('request_party_state', { characterId });
 
     return () => {
       socket.off('party_state', onPartyState);

@@ -55,6 +55,7 @@ function createTestDb() {
       conditions_json   TEXT DEFAULT '[]',
       buffs_json        TEXT DEFAULT '[]',
       concentrating_on  TEXT DEFAULT NULL,
+      concentration_id  TEXT DEFAULT NULL,
       slots_used_json   TEXT DEFAULT '{}',
       hd_used_json      TEXT DEFAULT '{}',
       feature_uses_json TEXT DEFAULT '{}',
@@ -78,7 +79,12 @@ function createTestDb() {
       character_id  INTEGER DEFAULT NULL,
       encounter_id  INTEGER DEFAULT NULL,
       instance_id   TEXT DEFAULT NULL,
-      stats_json    TEXT DEFAULT NULL
+      stats_json    TEXT DEFAULT NULL,
+      conditions_json TEXT DEFAULT '[]',
+      buffs_json TEXT DEFAULT '[]',
+      boss_phases_json TEXT DEFAULT '[]',
+      current_phase_index INTEGER DEFAULT 0,
+      phase_name TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS effect_events (

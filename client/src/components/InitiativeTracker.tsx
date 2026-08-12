@@ -18,17 +18,18 @@ import { AoEEffectModal, type AoETarget } from './AoEEffectModal';
 import { CombatantSidebar } from './CombatantSidebar';
 import { CombatRecoveryModal } from './CombatRecoveryModal';
 import { SidebarSheetMini } from './combat/SidebarSheetMini';
+import { BossPhaseControls, type BossPhase } from './BossPhaseControls';
 
 // ─── Sorting Utility ─────────────────────────────────────────────────────────
 
-interface Combatant {
+export interface Combatant {
   id: number;
   entity_name: string;
   entity_type: 'pc' | 'monster' | 'npc';
   initiative: number;
-  current_hp: number;
-  max_hp: number;
-  ac: number;
+  current_hp: number | null;
+  max_hp: number | null;
+  ac: number | null;
   is_active: number;
   is_hidden: number;
   sort_order: number;
@@ -38,6 +39,10 @@ interface Combatant {
   concentrating_on: string | null;
   hp_status: string;
   stats_json: Record<string, any> | null;
+  buffs: Array<Record<string, unknown>>;
+  boss_phases: BossPhase[];
+  current_phase_index: number;
+  phase_name: string | null;
 }
 
 /**
@@ -728,10 +733,12 @@ export function InitiativeTracker() {
         <div className="space-y-1 max-h-[500px] overflow-y-auto pr-1">
           {tracker.map((ent, i) => {
             const char = members.find(m => m.id === ent.character_id?.toString());
+            const hasExactHp = ent.entity_type === 'pc' || (ent.current_hp !== null && ent.max_hp !== null);
             const hp = ent.current_hp ?? char?.hp.current ?? 0;
             const maxHp = ent.max_hp ?? char?.hp.max ?? 1;
-            const hpPercent = Math.max(0, (hp / maxHp) * 100);
-            const isDead = hp <= 0;
+            const statusPercent = ent.hp_status === 'Dead' ? 0 : ent.hp_status === 'Critical' ? 20 : ent.hp_status === 'Bloodied' ? 45 : 100;
+            const hpPercent = hasExactHp ? Math.max(0, (hp / maxHp) * 100) : statusPercent;
+            const isDead = hasExactHp ? hp <= 0 : ent.hp_status === 'Dead';
             const conditions: string[] = ent.conditions ?? char?.conditions ?? [];
             const isActive = ent.is_active === 1;
             const isHidden = ent.is_hidden === 1;
@@ -901,13 +908,13 @@ export function InitiativeTracker() {
                   {/* HP + AC */}
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className={`text-[10px] font-bold tabular-nums ${hpColor}`}>
-                      {hp}<span className="text-muted-foreground/50 font-normal">/{maxHp}</span>
+                      {hasExactHp ? <>{hp}<span className="text-muted-foreground/50 font-normal">/{maxHp}</span></> : ent.hp_status}
                     </span>
                     <span className={`flex items-center gap-0.5 text-[10px] rounded px-1 transition-all ${
                       hasAuraBuff ? 'text-emerald-400 border border-emerald-500/40 aura-highlight-buff bg-emerald-950/20' : 
                       hasAuraDebuff ? 'text-purple-400 border border-purple-500/40 aura-highlight-debuff bg-purple-950/20' : 'text-muted-foreground'
                     }`}>
-                      <Shield className="h-2.5 w-2.5 text-mana" />{ent.ac ?? char?.ac}
+                      <Shield className="h-2.5 w-2.5 text-mana" />{ent.ac ?? char?.ac ?? '?'}
                     </span>
                   </div>
 
@@ -963,6 +970,7 @@ export function InitiativeTracker() {
                     </div>
                   )}
                 </div>
+                {!isPC && isDm && <BossPhaseControls combatant={ent} />}
               </div>
             );
           })}

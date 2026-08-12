@@ -77,6 +77,7 @@ function parseSessionState(raw) {
     conditionDurations: JSON.parse(raw.condition_durations_json || '{}'),
     activeBuffs: JSON.parse(raw.buffs_json || '[]'),
     concentratingOn: raw.concentrating_on,
+    concentrationId: raw.concentration_id || null,
     spellSlotsUsed: JSON.parse(raw.slots_used_json || '{}'),
     hitDiceUsed: JSON.parse(raw.hd_used_json || '{}'),
     featureUses: JSON.parse(raw.feature_uses_json || '{}'),
@@ -98,6 +99,7 @@ function saveSessionState(db, state) {
       conditions_json = ?,
       buffs_json = ?,
       concentrating_on = ?,
+      concentration_id = ?,
       slots_used_json = ?,
       hd_used_json = ?,
       feature_uses_json = ?,
@@ -112,6 +114,7 @@ function saveSessionState(db, state) {
     JSON.stringify(state.activeConditions),
     JSON.stringify(state.activeBuffs),
     state.concentratingOn,
+    state.concentrationId || null,
     JSON.stringify(state.spellSlotsUsed),
     JSON.stringify(state.hitDiceUsed),
     JSON.stringify(state.featureUses),
@@ -198,6 +201,69 @@ function runInImmediateTransaction(db, fn) {
   return db.transaction(fn).immediate();
 }
 
+function removeLinkedConcentrationBuffs(db, { sourceCharacterId, concentrationId, spellName, excludeCharacterId = null }) {
+  const rows = db.prepare('SELECT character_id, buffs_json FROM session_states').all();
+  const update = db.prepare("UPDATE session_states SET buffs_json = ?, updated_at = datetime('now') WHERE character_id = ?");
+  const removedBuffIds = [];
+  const affectedCharacterIds = [];
+  const affectedTrackerIds = [];
+
+  for (const row of rows) {
+    if (row.character_id === excludeCharacterId) continue;
+    let buffs;
+    try { buffs = JSON.parse(row.buffs_json || '[]'); } catch { buffs = []; }
+
+    const retained = buffs.filter(buff => {
+      if (!buff.isConcentration) return true;
+      const buffSourceId = Number(buff.sourceCharacterId ?? buff.casterCharacterId);
+      if (buffSourceId !== Number(sourceCharacterId)) return true;
+
+      const matchesInstance = concentrationId && buff.concentrationId
+        ? buff.concentrationId === concentrationId
+        : !buff.concentrationId || !concentrationId;
+      const matchesLegacySpell = !buff.concentrationId
+        && spellName
+        && String(buff.name || '').toLowerCase() === String(spellName).toLowerCase();
+      if (!matchesInstance && !matchesLegacySpell) return true;
+
+      if (buff.id) removedBuffIds.push(buff.id);
+      return false;
+    });
+
+    if (retained.length !== buffs.length) {
+      update.run(JSON.stringify(retained), row.character_id);
+      affectedCharacterIds.push(row.character_id);
+    }
+  }
+
+  const monsterRows = db.prepare("SELECT id, buffs_json FROM initiative_tracker WHERE entity_type IN ('monster', 'npc')").all();
+  const updateMonster = db.prepare('UPDATE initiative_tracker SET buffs_json = ? WHERE id = ?');
+  for (const row of monsterRows) {
+    let buffs;
+    try { buffs = JSON.parse(row.buffs_json || '[]'); } catch { buffs = []; }
+    const retained = buffs.filter(buff => {
+      if (!buff.isConcentration) return true;
+      const buffSourceId = Number(buff.sourceCharacterId ?? buff.casterCharacterId);
+      if (buffSourceId !== Number(sourceCharacterId)) return true;
+      const matchesInstance = concentrationId && buff.concentrationId
+        ? buff.concentrationId === concentrationId
+        : !buff.concentrationId || !concentrationId;
+      const matchesLegacySpell = !buff.concentrationId
+        && spellName
+        && String(buff.name || '').toLowerCase() === String(spellName).toLowerCase();
+      if (!matchesInstance && !matchesLegacySpell) return true;
+      if (buff.id) removedBuffIds.push(buff.id);
+      return false;
+    });
+    if (retained.length !== buffs.length) {
+      updateMonster.run(JSON.stringify(retained), row.id);
+      affectedTrackerIds.push(row.id);
+    }
+  }
+
+  return { removedBuffIds, affectedCharacterIds, affectedTrackerIds };
+}
+
 // ---------------------------------------------------------------------------
 // CORE EVENT HANDLERS
 // ---------------------------------------------------------------------------
@@ -231,11 +297,21 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
 
     state.currentHp = damageResult.newCurrentHp;
     state.tempHp = damageResult.newTempHp;
+    let concentrationCleanup = { removedBuffIds: [], affectedCharacterIds: [], affectedTrackerIds: [] };
 
     if (automationRules.concentrationCleanup && state.currentHp === 0 && state.concentratingOn) {
+      const droppedSpell = state.concentratingOn;
+      const droppedConcentrationId = state.concentrationId;
       const concChange = resolveConcentrationChange(state.concentratingOn, null, state.activeBuffs);
       state.concentratingOn = null;
+      state.concentrationId = null;
       state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
+      concentrationCleanup = removeLinkedConcentrationBuffs(db, {
+        sourceCharacterId: characterId,
+        concentrationId: droppedConcentrationId,
+        spellName: droppedSpell,
+        excludeCharacterId: characterId,
+      });
     }
 
     if (automationRules.automaticUnconscious && state.currentHp === 0 && !state.activeConditions.includes('unconscious')) {
@@ -257,7 +333,8 @@ function applyDamageEvent(db, characterId, rawAmount, damageType = 'untyped', re
       newTempHp: state.tempHp,
       damageDealt: damageResult.damageDealt,
       modifier: damageResult.modifier,
-      concentrationCheck: concCheck.required ? { required: true, dc: concCheck.dc } : null,
+      concentrationCheck: state.currentHp > 0 && concCheck.required ? { required: true, dc: concCheck.dc } : null,
+      concentrationCleanup,
       droppedToZero: state.currentHp === 0,
       logMessage: logMsg,
     };
@@ -299,16 +376,35 @@ function castConcentrationSpellEvent(db, characterId, spellName, slotLevel = nul
     const char = getCharacterData(db, characterId);
     const state = getSessionState(db, characterId);
     if (!char || !state) return { success: false, error: 'Character not found' };
+    const previousConcentrationId = state.concentrationId;
     const concChange = resolveConcentrationChange(state.concentratingOn, spellName, state.activeBuffs);
     state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
+    const linkedCleanup = state.concentratingOn
+      ? removeLinkedConcentrationBuffs(db, {
+          sourceCharacterId: characterId,
+          concentrationId: previousConcentrationId,
+          spellName: state.concentratingOn,
+          excludeCharacterId: characterId,
+        })
+      : { removedBuffIds: [], affectedCharacterIds: [], affectedTrackerIds: [] };
     state.concentratingOn = spellName;
+    state.concentrationId = crypto.randomUUID();
     if (slotLevel !== null) {
       const slotResult = useSpellSlot(char.spellSlots, state.spellSlotsUsed, slotLevel);
       if (!slotResult.success) return { success: false, error: slotResult.error };
       state.spellSlotsUsed = slotResult.newSlotsUsed;
     }
     saveSessionState(db, state);
-    return { success: true, newConcentration: spellName, droppedSpell: concChange.droppedSpell, droppedBuffIds: concChange.droppedBuffIds, logMessage: `${char.name} began concentrating on ${spellName}${concChange.droppedSpell ? `, dropping ${concChange.droppedSpell}` : ''}` };
+    return {
+      success: true,
+      newConcentration: spellName,
+      concentrationId: state.concentrationId,
+      droppedSpell: concChange.droppedSpell,
+      droppedBuffIds: [...concChange.droppedBuffIds, ...linkedCleanup.removedBuffIds],
+      affectedCharacterIds: linkedCleanup.affectedCharacterIds,
+      affectedTrackerIds: linkedCleanup.affectedTrackerIds,
+      logMessage: `${char.name} began concentrating on ${spellName}${concChange.droppedSpell ? `, dropping ${concChange.droppedSpell}` : ''}`,
+    };
   });
 }
 
@@ -319,11 +415,26 @@ function dropConcentrationEvent(db, characterId) {
     if (!char || !state) return { success: false, error: 'Character not found' };
     if (!state.concentratingOn) return { success: true, logMessage: `${char.name} was not concentrating.` };
     const dropped = state.concentratingOn;
+    const droppedConcentrationId = state.concentrationId;
     const concChange = resolveConcentrationChange(dropped, null, state.activeBuffs);
     state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
+    const linkedCleanup = removeLinkedConcentrationBuffs(db, {
+      sourceCharacterId: characterId,
+      concentrationId: droppedConcentrationId,
+      spellName: dropped,
+      excludeCharacterId: characterId,
+    });
     state.concentratingOn = null;
+    state.concentrationId = null;
     saveSessionState(db, state);
-    return { success: true, droppedSpell: dropped, droppedBuffIds: concChange.droppedBuffIds, logMessage: `${char.name} dropped concentration on ${dropped}.` };
+    return {
+      success: true,
+      droppedSpell: dropped,
+      droppedBuffIds: [...concChange.droppedBuffIds, ...linkedCleanup.removedBuffIds],
+      affectedCharacterIds: linkedCleanup.affectedCharacterIds,
+      affectedTrackerIds: linkedCleanup.affectedTrackerIds,
+      logMessage: `${char.name} dropped concentration on ${dropped}.`,
+    };
   });
 }
 
@@ -407,11 +518,20 @@ function applyBuffEvent(db, characterId, buffData) {
     const state = getSessionState(db, characterId);
     if (!state || !char) return { success: false };
 
+    const sourceCharacterId = Number(buffData.sourceCharacterId ?? buffData.casterCharacterId) || null;
+    let concentrationId = buffData.concentrationId || null;
+    if (buffData.isConcentration && sourceCharacterId && !concentrationId) {
+      concentrationId = getSessionState(db, sourceCharacterId)?.concentrationId || null;
+    }
+
     const newBuff = {
+      ...buffData,
       id: crypto.randomUUID ? crypto.randomUUID() : `buff-${Date.now()}-${Math.random()}`,
       name: buffData.name,
       sourceName: buffData.sourceName || 'System',
       isConcentration: !!buffData.isConcentration,
+      sourceCharacterId,
+      concentrationId,
       timestamp: new Date().toISOString()
     };
 

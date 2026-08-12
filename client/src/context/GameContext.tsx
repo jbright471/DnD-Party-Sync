@@ -226,16 +226,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     socket.emit('refresh_party');
     socket.emit('refresh_party_loot');
 
-    // Load initial effect timeline
-    fetch('/api/effect-timeline')
-      .then(r => r.json())
-      .then(setEffectEvents)
-      .catch(() => {});
-
     // Join DM room if token exists
     const storedToken = localStorage.getItem('dm_token');
     if (storedToken) {
+      fetch('/api/effect-timeline', { headers: { 'X-DM-Token': storedToken } })
+        .then(r => r.json())
+        .then(setEffectEvents)
+        .catch(() => {});
       socket.emit('dm_join_room', { dmToken: storedToken });
+    } else {
+      setEffectEvents([]);
     }
 
     return () => {

@@ -51,7 +51,10 @@ function runMigrations() {
   addColumnSafe('characters', 'raw_dndbeyond_json', "TEXT DEFAULT ''");
   addColumnSafe('characters', 'data_json', "TEXT DEFAULT '{}'"); // New Pivot Column
   addColumnSafe('characters', 'homebrew_inventory', "TEXT DEFAULT '[]'");
-  addColumnSafe('characters', 'ddb_id', "INTEGER UNIQUE DEFAULT NULL");
+  addColumnSafe('characters', 'ddb_id', "INTEGER DEFAULT NULL");
+  try {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_characters_ddb_id ON characters(ddb_id) WHERE ddb_id IS NOT NULL;');
+  } catch (_e) {}
 
   addColumnSafe('action_log', 'status', "TEXT DEFAULT 'applied'");
   addColumnSafe('action_log', 'effects_json', "TEXT DEFAULT NULL");
@@ -86,7 +89,12 @@ function runMigrations() {
       sort_order    INTEGER NOT NULL DEFAULT 0,
       character_id  INTEGER DEFAULT NULL,
       encounter_id  INTEGER DEFAULT NULL,
-      instance_id   TEXT DEFAULT NULL
+      instance_id   TEXT DEFAULT NULL,
+      conditions_json TEXT DEFAULT '[]',
+      buffs_json TEXT DEFAULT '[]',
+      boss_phases_json TEXT DEFAULT '[]',
+      current_phase_index INTEGER DEFAULT 0,
+      phase_name TEXT DEFAULT NULL
     );
   `);
 
@@ -136,6 +144,7 @@ function runMigrations() {
       conditions_json   TEXT DEFAULT '[]',
       buffs_json        TEXT DEFAULT '[]',
       concentrating_on  TEXT DEFAULT NULL,
+      concentration_id  TEXT DEFAULT NULL,
       slots_used_json   TEXT DEFAULT '{}',
       hd_used_json      TEXT DEFAULT '{}',
       feature_uses_json TEXT DEFAULT '{}',
@@ -338,6 +347,7 @@ function runMigrations() {
 
   // ---- Phase 15.0: Condition Duration Tracking ----
   addColumnSafe('session_states', 'condition_durations_json', "TEXT DEFAULT '{}'");
+  addColumnSafe('session_states', 'concentration_id', 'TEXT DEFAULT NULL');
 
   // ---- Phase 15.0: Audit Log, Idempotency & Resource Authority ----
   addColumnSafe('effect_events', 'request_id', 'TEXT DEFAULT NULL');
@@ -355,6 +365,11 @@ function runMigrations() {
 
   // ---- Phase 15.1: Compendium — store full stats on spawned monsters ----
   addColumnSafe('initiative_tracker', 'stats_json', "TEXT DEFAULT NULL");
+  addColumnSafe('initiative_tracker', 'conditions_json', "TEXT DEFAULT '[]'");
+  addColumnSafe('initiative_tracker', 'buffs_json', "TEXT DEFAULT '[]'");
+  addColumnSafe('initiative_tracker', 'boss_phases_json', "TEXT DEFAULT '[]'");
+  addColumnSafe('initiative_tracker', 'current_phase_index', 'INTEGER DEFAULT 0');
+  addColumnSafe('initiative_tracker', 'phase_name', 'TEXT DEFAULT NULL');
 
   // ---- Phase 16.0: AoE group tracking ----
   addColumnSafe('effect_events', 'group_id', 'TEXT DEFAULT NULL');

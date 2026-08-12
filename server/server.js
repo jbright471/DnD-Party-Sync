@@ -45,6 +45,12 @@ const {
 const { getPermissions, setPermissions, checkPermission } = require('./lib/permissions');
 const { getAutomationRules } = require('./lib/automationRules');
 const {
+    projectPartyState,
+    projectInitiativeState,
+    projectTimeline,
+    canSocketReceiveEvent,
+} = require('./lib/clientStateProjection');
+const {
     normalizeRollVisibility,
     isPublicRoll,
     buildRollRouting,
@@ -77,6 +83,7 @@ const { createSnapshot, computeDiff, restoreSnapshot } = require('./lib/snapshot
 
 const { getActiveAuras, clearAllAuras } = require('./services/effects-engine/auras');
 const { getSmartPins, saveSmartPins, clearAllSmartPins } = require('./services/effects-engine/smartPins');
+const { configureBossPhases, transitionBossPhase } = require('./services/bossPhases');
 
 function broadcastAuras() {
     io.emit('active_auras_sync', getActiveAuras(db));
@@ -471,13 +478,17 @@ app.get('/api/effect-timeline', (req, res) => {
         }
         const beforeId = req.query.beforeId === undefined ? undefined : parseInt(req.query.beforeId);
         const targetId = req.query.targetId === undefined ? undefined : parseInt(req.query.targetId);
-        res.json(getFilteredTimeline(db, {
+        const events = getFilteredTimeline(db, {
             limit,
             combatSessionId,
             beforeId: Number.isNaN(beforeId) ? undefined : beforeId,
             targetId: Number.isNaN(targetId) ? undefined : targetId,
             eventType: req.query.eventType || undefined,
-        }));
+        });
+        const authHeader = req.headers.authorization || '';
+        const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+        const dmToken = req.headers['x-dm-token'] || bearerToken;
+        res.json(requireDm(dmToken) ? events : []);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -589,17 +600,10 @@ loadCombatState();
 
 // --- Helpers ---
 let partyStateTimer = null;
-function broadcastPartyState() {
-    if (partyStateTimer) clearTimeout(partyStateTimer);
-    partyStateTimer = setTimeout(() => {
-        rawBroadcastPartyState();
-        partyStateTimer = null;
-    }, 50);
-}
 
-function rawBroadcastPartyState() {
+function getResolvedPartyState() {
     const characters = getAllCharacters();
-    const resolved = characters.map(char => {
+    return characters.map(char => {
         const resolvedState = getResolvedCharacterState(db, char.id);
         if (resolvedState) return resolvedState;
         return {
@@ -620,7 +624,54 @@ function rawBroadcastPartyState() {
             homebrewInventory: JSON.parse(char.homebrew_inventory || '[]')
         };
     });
-    io.emit('party_state', resolved);
+}
+
+function getSocketProjectionContext(socket) {
+    if (socket.castView) return { role: 'cast', characterId: null };
+    if (socket.dmAuthenticated) return { role: 'dm', characterId: null };
+    const player = playerSocketMap.get(socket.id);
+    if (player) return { role: 'player', characterId: player.characterId };
+    return { role: 'public', characterId: null };
+}
+
+function forEachConnectedSocket(callback) {
+    for (const connectedSocket of io.sockets.sockets.values()) callback(connectedSocket);
+}
+
+function emitProjectedPartyState(socket, resolved = getResolvedPartyState()) {
+    socket.emit('party_state', projectPartyState(resolved, getSocketProjectionContext(socket)));
+}
+
+function emitProjectedInitiativeState(socket, tracker = getTrackerState()) {
+    socket.emit('initiative_state', projectInitiativeState(tracker, {
+        ...getSocketProjectionContext(socket),
+        permissions: getPermissions(db),
+    }));
+}
+
+function emitProjectedTimeline(socket, events = getCombatTimeline(db)) {
+    socket.emit('timeline_update', projectTimeline(events, getSocketProjectionContext(socket)));
+}
+
+function emitRoleState(socket) {
+    emitProjectedPartyState(socket);
+    emitProjectedInitiativeState(socket);
+    emitProjectedTimeline(socket);
+    socket.emit('permissions_state', getPermissions(db));
+    socket.emit('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
+}
+
+function broadcastPartyState() {
+    if (partyStateTimer) clearTimeout(partyStateTimer);
+    partyStateTimer = setTimeout(() => {
+        rawBroadcastPartyState();
+        partyStateTimer = null;
+    }, 50);
+}
+
+function rawBroadcastPartyState() {
+    const resolved = getResolvedPartyState();
+    forEachConnectedSocket(socket => emitProjectedPartyState(socket, resolved));
 }
 
 function broadcastPartyLoot() {
@@ -641,7 +692,10 @@ function broadcastPartyLoot() {
 
 function broadcastLogs() {
     const logs = db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all();
-    io.emit('action_logged', logs.reverse());
+    const orderedLogs = logs.reverse();
+    forEachConnectedSocket(socket => {
+        if (!socket.castView) socket.emit('action_logged', orderedLogs);
+    });
 }
 
 let initiativeTimer = null;
@@ -655,12 +709,14 @@ function broadcastInitiative() {
 
 function rawBroadcastInitiative() {
     const tracker = getTrackerState();
-    io.emit('initiative_state', tracker);
+    forEachConnectedSocket(socket => emitProjectedInitiativeState(socket, tracker));
 }
 
 function broadcastNotes() {
     const notes = db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all();
-    io.emit('notes_state', notes);
+    forEachConnectedSocket(socket => {
+        if (!socket.castView) socket.emit('notes_state', notes);
+    });
 }
 
 function broadcastWorldState() {
@@ -678,14 +734,16 @@ let _timelineTimer = null;
 function broadcastTimeline() {
     if (_timelineTimer) clearTimeout(_timelineTimer);
     _timelineTimer = setTimeout(() => {
-        io.emit('timeline_update', getCombatTimeline(db));
+        const events = getCombatTimeline(db);
+        forEachConnectedSocket(socket => emitProjectedTimeline(socket, events));
         _timelineTimer = null;
     }, 100);
 }
 function broadcastTimelineImmediate() {
     if (_timelineTimer) clearTimeout(_timelineTimer);
     _timelineTimer = null;
-    io.emit('timeline_update', getCombatTimeline(db));
+    const events = getCombatTimeline(db);
+    forEachConnectedSocket(socket => emitProjectedTimeline(socket, events));
 }
 
 function broadcastPermissions() {
@@ -774,14 +832,47 @@ function resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState
 io.on('connection', (socket) => {
     console.log(`[Socket] Client connected: ${socket.id}`);
 
+    socket.use(([event], next) => {
+        if (!canSocketReceiveEvent(socket, event)) {
+            socket.emit('cast_read_only_error', { message: 'The encounter cast view is read-only.' });
+            return next(new Error('Encounter cast view is read-only'));
+        }
+        next();
+    });
+
     // DM room join — validates stored token before admitting to dm_room
     socket.on('dm_join_room', ({ dmToken }) => {
         if (requireDm(dmToken)) {
             socket.join('dm_room');
             socket.dmAuthenticated = true;
+            socket.castView = false;
             socket.emit('dm_room_joined', { success: true });
+            emitRoleState(socket);
+            socket.emit('action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
+            socket.emit('notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
+            const pendingImports = db.prepare('SELECT * FROM pending_imports ORDER BY created_at ASC').all().map(r => ({
+                id: r.id,
+                characterId: r.character_id,
+                playerName: r.player_name,
+                url: r.url,
+                flags: JSON.parse(r.diff_json || '{}').flags || [],
+                diff: JSON.parse(r.diff_json || '{}').diff || {},
+                incomingData: JSON.parse(r.incoming_data_json)
+            }));
+            socket.emit('pending_imports_sync', pendingImports);
         }
     });
+
+    socket.on('register_cast_view', ({ encounterId } = {}) => {
+        socket.leave('dm_room');
+        socket.dmAuthenticated = false;
+        socket.castView = true;
+        socket.castEncounterId = encounterId ?? null;
+        playerSocketMap.delete(socket.id);
+        emitRoleState(socket);
+    });
+
+    socket.on('request_cast_state', () => emitRoleState(socket));
 
     // Relay DM prep note mutations to dm_room so other DM tabs stay in sync
     socket.on('relay_dm_note', ({ event, data }) => {
@@ -790,40 +881,17 @@ io.on('connection', (socket) => {
         }
     });
 
-    broadcastPartyState();
-    broadcastLogs();
-    broadcastInitiative();
-    broadcastNotes();
-    broadcastMapState();
-    broadcastWorldMapState();
-    broadcastWorldState();
-    broadcastAuras();
-    broadcastSmartPins();
+    emitRoleState(socket);
     socket.emit('approval_mode', isApprovalMode);
-    const pendingImports = db.prepare('SELECT * FROM pending_imports ORDER BY created_at ASC').all().map(r => ({
-        id: r.id,
-        characterId: r.character_id,
-        playerName: r.player_name,
-        url: r.url,
-        flags: JSON.parse(r.diff_json || '{}').flags || [],
-        diff: JSON.parse(r.diff_json || '{}').diff || {},
-        incomingData: JSON.parse(r.incoming_data_json)
-    }));
-    socket.emit('pending_imports_sync', pendingImports);
-    socket.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
-    socket.emit('timeline_update', getCombatTimeline(db));
-    socket.emit('permissions_state', getPermissions(db));
-    socket.emit('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
 
     // ── Companion view pull ───────────────────────────────────────────────────
     // Emits party_state only to the requesting socket (used by /companion/:id)
-    socket.on('request_party_state', () => {
-        const characters = getAllCharacters();
-        const resolved = characters.map(char => {
-            const resolvedState = getResolvedCharacterState(db, char.id);
-            return resolvedState || { ...char, currentHp: char.current_hp, maxHp: char.max_hp };
-        });
-        socket.emit('party_state', resolved);
+    socket.on('request_party_state', ({ characterId } = {}) => {
+        if (characterId && !socket.dmAuthenticated && !socket.castView) {
+            playerSocketMap.set(socket.id, { characterId: Number(characterId), playerName: 'Companion' });
+        }
+        emitProjectedPartyState(socket);
+        emitProjectedTimeline(socket);
     });
 
     // --- Aura-Sync Sockets ---
@@ -993,7 +1061,7 @@ io.on('connection', (socket) => {
             db.prepare('DELETE FROM pending_imports WHERE id = ?').run(id);
 
             broadcastPartyState();
-            
+
             const remaining = db.prepare('SELECT * FROM pending_imports ORDER BY created_at ASC').all().map(r => ({
                 id: r.id,
                 characterId: r.character_id,
@@ -1148,6 +1216,7 @@ io.on('connection', (socket) => {
 
                 if (!passed) {
                     dropConcentrationEvent(db, characterId);
+                    broadcastInitiative();
                     io.emit('concentration_broken', { characterId, characterName: charName, spellName, roll, total, dc });
                 } else {
                     io.emit('concentration_maintained', { characterId, characterName: charName, spellName, roll, total, dc });
@@ -1160,6 +1229,9 @@ io.on('connection', (socket) => {
             }
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
+            if (result.concentrationCleanup?.affectedTrackerIds?.length > 0) {
+                broadcastInitiative();
+            }
 
             // Emit dedicated HP-change event for DM flash effects
             const hpChar = getCharacterData(db, characterId);
@@ -1270,6 +1342,7 @@ io.on('connection', (socket) => {
         });
 
         broadcastPartyState();
+        if (isConcentration) broadcastInitiative();
         broadcastTimeline();
     });
 
@@ -1287,6 +1360,7 @@ io.on('connection', (socket) => {
             });
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
+            broadcastInitiative();
             broadcastTimeline();
         }
         else socket.emit('rules_error', { message: result.error });
@@ -1308,6 +1382,7 @@ io.on('connection', (socket) => {
             });
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
+            broadcastInitiative();
             broadcastTimeline();
         }
     });
@@ -1315,7 +1390,11 @@ io.on('connection', (socket) => {
     socket.on('concentration_check_result', ({ characterId, spellName, passed, dc }) => {
         if (!passed) {
             const result = dropConcentrationEvent(db, characterId);
-            if (result.success) { logAction('System', result.logMessage); broadcastPartyState(); }
+            if (result.success) {
+                logAction('System', result.logMessage);
+                broadcastPartyState();
+                broadcastInitiative();
+            }
         }
         const char = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId);
         const label = char ? char.name : `Character ${characterId}`;
@@ -1361,8 +1440,23 @@ io.on('connection', (socket) => {
 
     socket.on('apply_buff', ({ characterIds, buffData, actor, requestId }) => {
         const ids = Array.isArray(characterIds) ? characterIds : [characterIds];
+        let resolvedBuffData = { ...(buffData || {}) };
+        if (resolvedBuffData.isConcentration && resolvedBuffData.sourceCharacterId) {
+            const sourceCharacterId = Number(resolvedBuffData.sourceCharacterId);
+            const sourceState = getSessionState(db, sourceCharacterId);
+            if (!sourceState?.concentrationId || sourceState.concentratingOn !== resolvedBuffData.name) {
+                const concentration = castConcentrationSpellEvent(db, sourceCharacterId, resolvedBuffData.name, null);
+                if (!concentration.success) {
+                    socket.emit('rules_error', { message: concentration.error });
+                    return;
+                }
+                resolvedBuffData.concentrationId = concentration.concentrationId;
+            } else {
+                resolvedBuffData.concentrationId = sourceState.concentrationId;
+            }
+        }
         ids.forEach(id => {
-            const result = applyBuffEvent(db, id, buffData);
+            const result = applyBuffEvent(db, id, resolvedBuffData);
             if (result.success) {
                 const charData = getCharacterData(db, id);
                 const charName = charData?.name ?? `Character ${id}`;
@@ -1370,8 +1464,8 @@ io.on('connection', (socket) => {
                     sessionRound: currentCombatRound, turnIndex: currentTurnIndex,
                     eventType: 'buff_applied', actor: actor || 'System',
                     targetId: id, targetName: charName,
-                    payload: { buffData }, requestId: requestId ? `${requestId}-buff-${id}` : undefined,
-                    description: `${actor || 'System'} applied ${buffData?.name || 'buff'} to ${charName}`,
+                    payload: { buffData: resolvedBuffData }, requestId: requestId ? `${requestId}-buff-${id}` : undefined,
+                    description: `${actor || 'System'} applied ${resolvedBuffData?.name || 'buff'} to ${charName}`,
                 });
                 logAction(actor || 'System', result.logMessage);
             }
@@ -1707,12 +1801,52 @@ io.on('connection', (socket) => {
     });
 
     socket.on('spawn_monster', (monsterData) => {
+        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
         spawnMonster(monsterData);
         broadcastInitiative();
         logAction('DM', `Spawned ${monsterData.name} into initiative.`);
     });
 
+    socket.on('configure_boss_phases', ({ trackerId, phases }) => {
+        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        const result = configureBossPhases(db, trackerId, phases);
+        if (!result.success) { socket.emit('rules_error', { message: result.error }); return; }
+        broadcastInitiative();
+        socket.emit('boss_phases_configured', { trackerId, ...result });
+    });
+
+    socket.on('transition_boss_phase', ({ trackerId, phaseIndex = null }) => {
+        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        const entity = db.prepare('SELECT entity_name FROM initiative_tracker WHERE id = ?').get(trackerId);
+        const result = transitionBossPhase(db, trackerId, phaseIndex);
+        if (!result.success) { socket.emit('rules_error', { message: result.error }); return; }
+        if (!result.unchanged) {
+            writeAuditEvent(db, {
+                sessionRound: currentCombatRound,
+                turnIndex: currentTurnIndex,
+                eventType: 'boss_phase_transition',
+                actor: 'DM',
+                targetId: trackerId,
+                targetType: 'monster',
+                targetName: entity?.entity_name || 'Boss',
+                payload: {
+                    previousPhaseIndex: result.previousPhaseIndex,
+                    currentPhaseIndex: result.currentPhaseIndex,
+                    phaseName: result.phase.name,
+                    hpMode: result.phase.hpMode,
+                    currentHp: result.currentHp,
+                },
+                description: `${entity?.entity_name || 'Boss'} entered ${result.phase.name}`,
+            });
+            logAction('DM', `${entity?.entity_name || 'Boss'} entered ${result.phase.name}.`);
+            broadcastInitiative();
+            broadcastTimeline();
+        }
+        socket.emit('boss_phase_transitioned', { trackerId, ...result });
+    });
+
     socket.on('toggle_entity_visibility', ({ entityId }) => {
+        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
         const entity = db.prepare('SELECT is_hidden FROM initiative_tracker WHERE id = ?').get(entityId);
         if (entity) {
             db.prepare('UPDATE initiative_tracker SET is_hidden = ? WHERE id = ?').run(entity.is_hidden ? 0 : 1, entityId);
@@ -1863,7 +1997,7 @@ io.on('connection', (socket) => {
             }
         }
 
-        io.emit('initiative_state', tracker);
+        rawBroadcastInitiative();
     });
 
     socket.on('prev_turn', () => {
@@ -1882,7 +2016,7 @@ io.on('connection', (socket) => {
         saveCombatState();
         broadcastCombatState();
 
-        io.emit('initiative_state', tracker);
+        rawBroadcastInitiative();
     });
 
     socket.on('set_initiative', ({ trackerId, initiative }) => {
@@ -2086,15 +2220,15 @@ io.on('connection', (socket) => {
             try {
                 archiveActiveCombatSession(db, currentCombatRound);
                 endEncounter();
-                currentCombatRound = 0; 
-                currentTurnIndex = 0; 
-                saveCombatState(); 
-                broadcastCombatState(); 
+                currentCombatRound = 0;
+                currentTurnIndex = 0;
+                saveCombatState();
+                broadcastCombatState();
                 clearAllAuras(db);
                 broadcastAuras();
                 clearAllSmartPins(db);
                 broadcastSmartPins();
-                broadcastInitiative(); 
+                broadcastInitiative();
                 broadcastPartyState();
             } catch (_) {}
             callback?.({ success: false, error: err.message });
@@ -2262,7 +2396,11 @@ io.on('connection', (socket) => {
     });
 
     socket.on('register_player', ({ characterId, playerName }) => {
-        playerSocketMap.set(socket.id, { characterId, playerName });
+        if (socket.castView) return;
+        playerSocketMap.set(socket.id, { characterId: Number(characterId), playerName });
+        emitRoleState(socket);
+        socket.emit('action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
+        socket.emit('notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
     });
 
     socket.on('dm_whisper', ({ targetCharacterId, message }) => {

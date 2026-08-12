@@ -475,6 +475,9 @@ If you're concentrating on a spell:
 - Taking damage triggers an automatic **Concentration Check** (CON save, DC = max(10, damage/2))
 - If you fail, concentration drops and the DM is notified
 - Casting another concentration spell automatically drops the current one
+- Buffs linked to that casting automatically disappear from every affected character and monster when concentration ends
+
+> **DM shortcut:** In the buff manager, enable **Requires concentration**, choose the concentrating character, then select all affected targets. Arcane Ally links those effects to the same casting instance.
 
 ## Class Feature Toggles (Grim-Rage)
 
@@ -725,7 +728,22 @@ The **Player Miniature Sidebar** (toggled via the **Miniatures** button in the h
 
 ## Encounter Cast View
 
-For an immersive in-person table experience, Arcane Ally provides a standalone read-only cast window at \`/encounter/:id/cast\`. Designed with a dark-fantasy aesthetic, it displays the live party state and initiative order without any interactive clutter, making it perfect for casting to a secondary monitor or TV screen.
+For an immersive in-person table experience, open \`/encounter/:id/cast\` on a secondary monitor or TV. This view is read-only and updates live.
+
+- Party members show exact HP.
+- Revealed monsters show a broad health label instead of exact HP, maximum HP, or AC.
+- Monsters hidden with the **eye** control do not appear at all.
+- Private sheets, future boss phases, effect details, notes, and DM tools are never sent to the cast view.
+
+## Multi-Phase Bosses
+
+> **Where to go:** \`DM Dashboard -> Initiative Tracker -> monster row -> Phases\`
+
+1. Click **Phases** on the monster you want to configure.
+2. Add at least two phases and give each phase a name, maximum HP, and AC.
+3. Choose how HP changes on entry: **Reset** fills the new pool, **Retain** keeps the current numeric HP, and **Proportional** keeps the same health percentage.
+4. Leave **Clear conditions** and **Clear buffs** off to preserve active effects. Enable either option only when that phase should remove them.
+5. Click **Save**, then use **Next Phase** during combat. The transition is recorded in the Effect Timeline.
 
 ## AoE / Multi-Target Effects (REST API)
 

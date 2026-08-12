@@ -39,6 +39,7 @@
  * @property {string[]} activeConditions
  * @property {Array<ActiveBuff>} activeBuffs
  * @property {string|null} concentratingOn
+ * @property {string|null} concentrationId
  * @property {Object.<number, number>} spellSlotsUsed
  * @property {Object.<string, number>} hitDiceUsed
  * @property {Object.<string, number>} featureUses
@@ -54,7 +55,8 @@
  * @property {string} modifierValue
  * @property {number} [durationRounds]
  * @property {boolean} isConcentration
- * @property {string} [casterCharacterId]
+ * @property {number} [sourceCharacterId]
+ * @property {string} [concentrationId]
  * @property {string[]} targetCharacterIds
  */
 
@@ -86,6 +88,7 @@ function createInitialSessionState(character, sessionId) {
         activeConditions: [],
         activeBuffs: [],
         concentratingOn: null,
+        concentrationId: null,
         spellSlotsUsed: {},
         hitDiceUsed,
         featureUses,

@@ -8,6 +8,8 @@ const {
   applyDamageEvent,
   applyHealEvent,
   applyBuffEvent,
+  castConcentrationSpellEvent,
+  dropConcentrationEvent,
 } = require('../lib/rulesIntegration');
 
 describe('Round-Teardown & Severe State Changes', () => {
@@ -46,6 +48,35 @@ describe('Round-Teardown & Severe State Changes', () => {
       VALUES (?, ?, ?, ?, ?)
     `);
     initSession.run(1, 20, 0, '[]', '[]');
+  });
+
+  it('removes linked concentration buffs from every affected character', () => {
+    db.prepare(`
+      INSERT INTO characters (id, name, class, level, max_hp, current_hp, ac, stats, inventory, data_json)
+      VALUES (2, 'Blessed Ally', 'Rogue', 5, 18, 18, 14, '{}', '[]', '{}')
+    `).run();
+    db.prepare(`
+      INSERT INTO session_states (character_id, current_hp, temp_hp, conditions_json, buffs_json)
+      VALUES (2, 18, 0, '[]', '[]')
+    `).run();
+
+    const concentration = castConcentrationSpellEvent(db, 1, 'Bless');
+    applyBuffEvent(db, 2, {
+      name: 'Bless',
+      sourceName: 'Test Teardown Char',
+      sourceCharacterId: 1,
+      concentrationId: concentration.concentrationId,
+      isConcentration: true,
+      modifierType: 'diceBonus',
+      modifierValue: '1d4',
+    });
+
+    expect(getSessionState(db, 2).activeBuffs).toHaveLength(1);
+    const result = dropConcentrationEvent(db, 1);
+
+    expect(result.affectedCharacterIds).toContain(2);
+    expect(getSessionState(db, 2).activeBuffs).toHaveLength(0);
+    expect(getSessionState(db, 1).concentrationId).toBeNull();
   });
 
   it('should dissolve concentration buffs and apply unconscious when dropping to 0 HP', () => {

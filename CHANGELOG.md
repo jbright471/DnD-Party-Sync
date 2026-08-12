@@ -7,12 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
+- **Multi-Phase Boss Tracker**: DMs can configure two or more phases on a monster, set phase-specific HP and AC, choose reset/retain/proportional HP transitions, and optionally clear conditions or buffs per phase.
+- **Concentration Ownership**: Concentration effects now retain their casting-character and spell-instance ownership so dropping concentration removes linked buffs from characters and monsters together.
 - **Campaign Automation Policies**: DMs can configure automatic unconscious handling, recovery cleanup, concentration cleanup and check behavior, condition duration ticks, initiative sync, turn triggers, auras, and curated reactive handlers from **DM Dashboard -> Automation -> Policies**.
 - **Encounter Timeline Archives**: Combat events are assigned to named combat sessions and retained when an encounter ends instead of being deleted when the next encounter starts.
 - **Combat History API**: Added combat-session listing and cursor-based timeline queries for active and archived encounters.
 - **Focused Coverage**: Added tests for enabled defaults, partial policy persistence, disabled automation behavior, and encounter history isolation.
 
 ### Changed
+- **Role-Safe Live State**: DM, player, public, and cast clients now receive server-projected combat payloads. Hidden monsters stay DM-only, cast displays use monster health labels instead of exact values, and players receive full private details only for their registered character.
+- **Cast View Safety**: The encounter cast socket is read-only at the server boundary and no longer receives future boss phases, monster stat blocks, effect details, action logs, notes, or pending imports.
 - **Timeline Discovery**: The DM timeline now includes a current/archive selector, earlier-event pagination, read-only archived views, and search across actors, targets, descriptions, spells, conditions, and event payloads.
 - **Automation Authority**: HP rules, concentration behavior, condition ticks, initiative synchronization, turn triggers, auras, and reactive handlers now consult the same server-side campaign policy source.
 - **Documentation**: Updated the README, client guide, Arcane Codex, and technical references for policy controls, encounter retention, and container-native dependency isolation.
