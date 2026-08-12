@@ -728,7 +728,7 @@ The **Player Miniature Sidebar** (toggled via the **Miniatures** button in the h
 
 ## Encounter Cast View
 
-For an immersive in-person table experience, open \`/encounter/:id/cast\` on a secondary monitor or TV. This view is read-only and updates live.
+For an immersive in-person table experience, use **Cast Link** in the DM Command Center and open the generated link on a secondary monitor or TV. The credential is stored for that tab only, and the view is read-only and updates live.
 
 - Party members show exact HP.
 - Revealed monsters show a broad health label instead of exact HP, maximum HP, or AC.
@@ -1024,9 +1024,9 @@ Ask your DM to share the companion URL for your character. They can generate it 
 2. Clicks the **📱 phone icon** in the sheet header
 3. The URL is copied to clipboard — they send it to you
 
-The URL looks like: \`http://[server-address]/companion/3\`
+The generated URL includes a private access credential after the \`#\` fragment. Treat it like a password and send it only to that character's player.
 
-Open it on your phone. It connects to the same live session — no login required.
+Open it on your phone. Arcane Ally removes the credential from the visible URL, keeps it in that tab's session storage, and connects it only to the character authorized by the DM. If the link was revoked or replaced, ask the DM for a fresh one.
 
 ## What You See
 

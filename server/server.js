@@ -84,6 +84,11 @@ const { createSnapshot, computeDiff, restoreSnapshot } = require('./lib/snapshot
 const { getActiveAuras, clearAllAuras } = require('./services/effects-engine/auras');
 const { getSmartPins, saveSmartPins, clearAllSmartPins } = require('./services/effects-engine/smartPins');
 const { configureBossPhases, transitionBossPhase } = require('./services/bossPhases');
+const {
+    bindSocketAccessGrant,
+    createAccessGrantService,
+} = require('./lib/accessGrants');
+const { createAccessGrantRouter } = require('./routes/accessGrants');
 
 function broadcastAuras() {
     io.emit('active_auras_sync', getActiveAuras(db));
@@ -135,6 +140,7 @@ function applyEffect(effect) {
 
 // --- Bootstrap ---
 runMigrations();
+const accessGrantService = createAccessGrantService(db);
 
 const app = express();
 const server = http.createServer(app);
@@ -626,9 +632,29 @@ function getResolvedPartyState() {
     });
 }
 
+function disconnectGrantSockets(grantId) {
+    for (const connectedSocket of io.sockets.sockets.values()) {
+        if (connectedSocket.accessGrant?.id === grantId) {
+            connectedSocket.emit('access_denied', {
+                message: 'This access link was revoked or replaced. Ask your DM for a new link.',
+            });
+            connectedSocket.disconnect(true);
+        }
+    }
+}
+
+app.use('/api/access-grants', createAccessGrantRouter({
+    service: accessGrantService,
+    requireDm,
+    onGrantInvalidated: disconnectGrantSockets,
+}));
+
 function getSocketProjectionContext(socket) {
-    if (socket.castView) return { role: 'cast', characterId: null };
     if (socket.dmAuthenticated) return { role: 'dm', characterId: null };
+    if (socket.accessGrant?.role === 'cast') return { role: 'cast', characterId: null };
+    if (socket.accessGrant?.role === 'player') {
+        return { role: 'player', characterId: socket.accessGrant.characterId };
+    }
     const player = playerSocketMap.get(socket.id);
     if (player) return { role: 'player', characterId: player.characterId };
     return { role: 'public', characterId: null };
@@ -829,8 +855,31 @@ function resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState
 }
 
 // --- Socket.io ---
+io.use((socket, next) => {
+    const accessFlow = socket.handshake.auth?.accessFlow;
+    const presentedToken = socket.handshake.auth?.accessToken;
+    const grant = bindSocketAccessGrant(socket, accessGrantService);
+
+    if (!accessFlow && !presentedToken) return next();
+    if (!grant || (accessFlow === 'companion' && grant.role !== 'player')
+        || (accessFlow === 'cast' && grant.role !== 'cast')) {
+        return next(new Error('This access link is invalid or has been revoked. Ask your DM for a new link.'));
+    }
+    next();
+});
+
 io.on('connection', (socket) => {
     console.log(`[Socket] Client connected: ${socket.id}`);
+
+    if (socket.accessGrant?.role === 'player') {
+        playerSocketMap.set(socket.id, {
+            characterId: socket.accessGrant.characterId,
+            playerName: 'Companion',
+        });
+    } else if (socket.accessGrant?.role === 'cast') {
+        socket.castView = true;
+        socket.castEncounterId = socket.accessGrant.encounterId;
+    }
 
     socket.use(([event], next) => {
         if (!canSocketReceiveEvent(socket, event)) {
@@ -863,13 +912,20 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('register_cast_view', ({ encounterId } = {}) => {
+    socket.on('register_cast_view', (_payload = {}, callback) => {
+        if (socket.accessGrant?.role !== 'cast') {
+            const denied = { success: false, message: 'This cast link is invalid. Ask the DM for a new link.' };
+            socket.emit('access_denied', denied);
+            callback?.(denied);
+            return;
+        }
         socket.leave('dm_room');
         socket.dmAuthenticated = false;
         socket.castView = true;
-        socket.castEncounterId = encounterId ?? null;
+        socket.castEncounterId = socket.accessGrant.encounterId;
         playerSocketMap.delete(socket.id);
         emitRoleState(socket);
+        callback?.({ success: true, role: 'cast', encounterId: socket.accessGrant.encounterId });
     });
 
     socket.on('request_cast_state', () => emitRoleState(socket));
@@ -886,12 +942,20 @@ io.on('connection', (socket) => {
 
     // ── Companion view pull ───────────────────────────────────────────────────
     // Emits party_state only to the requesting socket (used by /companion/:id)
-    socket.on('request_party_state', ({ characterId } = {}) => {
-        if (characterId && !socket.dmAuthenticated && !socket.castView) {
-            playerSocketMap.set(socket.id, { characterId: Number(characterId), playerName: 'Companion' });
+    socket.on('request_party_state', (_payload = {}, callback) => {
+        if (socket.accessGrant?.role !== 'player') {
+            const denied = { success: false, message: 'This companion link is invalid. Ask the DM for a new link.' };
+            socket.emit('access_denied', denied);
+            callback?.(denied);
+            return;
         }
+        playerSocketMap.set(socket.id, {
+            characterId: socket.accessGrant.characterId,
+            playerName: 'Companion',
+        });
         emitProjectedPartyState(socket);
         emitProjectedTimeline(socket);
+        callback?.({ success: true, role: 'player', characterId: socket.accessGrant.characterId });
     });
 
     // --- Aura-Sync Sockets ---
@@ -2395,12 +2459,22 @@ io.on('connection', (socket) => {
         io.emit('refresh_quests');
     });
 
-    socket.on('register_player', ({ characterId, playerName }) => {
+    socket.on('register_player', ({ playerName } = {}, callback) => {
         if (socket.castView) return;
-        playerSocketMap.set(socket.id, { characterId: Number(characterId), playerName });
+        if (socket.accessGrant?.role !== 'player') {
+            const denied = { success: false, message: 'A valid player access link is required.' };
+            socket.emit('access_denied', denied);
+            callback?.(denied);
+            return;
+        }
+        playerSocketMap.set(socket.id, {
+            characterId: socket.accessGrant.characterId,
+            playerName: playerName || 'Player',
+        });
         emitRoleState(socket);
         socket.emit('action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
         socket.emit('notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
+        callback?.({ success: true, role: 'player', characterId: socket.accessGrant.characterId });
     });
 
     socket.on('dm_whisper', ({ targetCharacterId, message }) => {

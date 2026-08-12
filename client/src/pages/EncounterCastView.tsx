@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Shield, Heart, Skull, Zap } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
-import socket from '../socket';
+import socket, { accessCredential } from '../socket';
 import { type Character } from '../types/character';
 
 interface Combatant {
@@ -28,6 +28,9 @@ export default function EncounterCastView() {
   const [initiative, setInitiative] = useState<Combatant[]>([]);
   const [combatState, setCombatState] = useState<CombatState>({ round: 0, turnIndex: 0 });
   const [isConnected, setIsConnected] = useState(socket.connected);
+  const [accessError, setAccessError] = useState<string | null>(
+    accessCredential.token ? null : 'This cast link is missing its access credential.',
+  );
 
   useEffect(() => {
     const onPartyState = (chars: any[]) => {
@@ -51,20 +54,32 @@ export default function EncounterCastView() {
 
     const onInitiativeState = (state: Combatant[]) => setInitiative(Array.isArray(state) ? state : []);
     const onCombatState = (state: CombatState) => setCombatState(state);
-    const registerCastView = () => socket.emit('register_cast_view', { encounterId: id });
+    const registerCastView = () => socket.emit(
+      'register_cast_view',
+      {},
+      (result: { success: boolean; message?: string }) => {
+        if (!result.success) setAccessError(result.message || 'This cast link is no longer valid.');
+      },
+    );
     const onConnect = () => {
       setIsConnected(true);
       registerCastView();
     };
     const onDisconnect = () => setIsConnected(false);
+    const onAccessDenied = ({ message }: { message?: string }) => {
+      setAccessError(message || 'This cast link is no longer valid.');
+    };
+    const onConnectError = (error: Error) => setAccessError(error.message);
 
     socket.on('party_state', onPartyState);
     socket.on('initiative_state', onInitiativeState);
     socket.on('combat_state_sync', onCombatState);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.on('access_denied', onAccessDenied);
+    socket.on('connect_error', onConnectError);
 
-    registerCastView();
+    if (socket.connected && accessCredential.token) registerCastView();
 
     return () => {
       socket.off('party_state', onPartyState);
@@ -72,8 +87,23 @@ export default function EncounterCastView() {
       socket.off('combat_state_sync', onCombatState);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.off('access_denied', onAccessDenied);
+      socket.off('connect_error', onConnectError);
     };
   }, [id]);
+
+  if (accessError) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center px-8">
+        <div className="max-w-lg text-center space-y-4">
+          <Shield className="h-12 w-12 text-red-700 mx-auto" />
+          <h1 className="font-display text-2xl text-red-100">A new cast link is required</h1>
+          <p className="text-sm text-white/60">{accessError}</p>
+          <p className="text-xs text-white/40">Ask the DM to generate a fresh read-only cast link.</p>
+        </div>
+      </div>
+    );
+  }
 
   const activeCombatants = initiative;
   const currentTurnIndex = initiative.findIndex(combatant => combatant.is_active === 1);

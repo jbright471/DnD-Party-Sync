@@ -176,6 +176,30 @@ export default function CharacterSheet() {
     });
   };
 
+  const handleCopyCompanionLink = async () => {
+    if (!state.dmToken) {
+      toast.error('DM authentication is required to generate a companion link.');
+      return;
+    }
+    try {
+      const response = await fetch('/api/access-grants/player', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${state.dmToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ characterId: Number(character.id) }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not generate link');
+      const url = `${window.location.origin}${payload.link}`;
+      await navigator.clipboard.writeText(url);
+      toast.success('Secure companion link copied!', { duration: 4000 });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not generate companion link');
+    }
+  };
+
   // ── Layout ─────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-7xl mx-auto pb-20 px-4 sm:px-6">
@@ -202,13 +226,7 @@ export default function CharacterSheet() {
               variant="outline"
               size="sm"
               title="Copy companion view URL for player"
-              onClick={() => {
-                const url = `${window.location.origin}/companion/${character.id}`;
-                navigator.clipboard.writeText(url).then(
-                  () => toast.success('Companion URL copied!', { description: url, duration: 4000 }),
-                  () => toast.error('Could not copy — ' + url),
-                );
-              }}
+              onClick={handleCopyCompanionLink}
             >
               <Smartphone className="h-4 w-4" />
             </Button>

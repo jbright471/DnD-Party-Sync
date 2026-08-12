@@ -10,7 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { DiceRoller } from '../components/DiceRoller';
 import { toast } from 'sonner';
-import socket from '../socket';
+import socket, { accessCredential } from '../socket';
 import { type Character, rollDice } from '../types/character';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -153,6 +153,9 @@ export default function CompanionPage() {
   const [character, setCharacter] = useState<Character | null>(null);
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [showDice, setShowDice] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(
+    accessCredential.token ? null : 'This companion link is missing its access credential.',
+  );
 
   useEffect(() => {
     const onPartyState = (chars: any[]) => {
@@ -197,22 +200,56 @@ export default function CompanionPage() {
       } as Character);
     };
 
-    const onConnect = () => setIsConnected(true);
+    const requestState = () => {
+      socket.emit('request_party_state', {}, (result: { success: boolean; message?: string; characterId?: number }) => {
+        if (!result.success) {
+          setAccessError(result.message || 'This companion link is no longer valid.');
+          return;
+        }
+        if (String(result.characterId) !== characterId) {
+          setAccessError('This link belongs to a different character. Ask your DM for the correct link.');
+        }
+      });
+    };
+    const onConnect = () => {
+      setIsConnected(true);
+      requestState();
+    };
     const onDisconnect = () => setIsConnected(false);
+    const onAccessDenied = ({ message }: { message?: string }) => {
+      setAccessError(message || 'This companion link is no longer valid.');
+    };
+    const onConnectError = (error: Error) => setAccessError(error.message);
 
     socket.on('party_state', onPartyState);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.on('access_denied', onAccessDenied);
+    socket.on('connect_error', onConnectError);
 
-    // Request initial state
-    socket.emit('request_party_state', { characterId });
+    if (socket.connected && accessCredential.token) requestState();
 
     return () => {
       socket.off('party_state', onPartyState);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.off('access_denied', onAccessDenied);
+      socket.off('connect_error', onConnectError);
     };
   }, [characterId]);
+
+  if (accessError) {
+    return (
+      <div className="min-h-screen bg-[hsl(240_10%_5%)] flex items-center justify-center px-6">
+        <div className="max-w-sm text-center space-y-3">
+          <Shield className="h-10 w-10 text-destructive/70 mx-auto" />
+          <h1 className="font-display text-xl text-primary">A new companion link is required</h1>
+          <p className="text-sm text-muted-foreground">{accessError}</p>
+          <p className="text-xs text-muted-foreground/60">Ask your DM to generate and send a fresh link for this character.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!character) {
     return (

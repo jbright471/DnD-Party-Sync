@@ -46,6 +46,13 @@ function createTestDb() {
       attacks     TEXT DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS encounters (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      monsters    TEXT NOT NULL DEFAULT '[]',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS session_states (
       character_id      INTEGER PRIMARY KEY,
       session_id        TEXT,

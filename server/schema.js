@@ -1,4 +1,5 @@
 const db = require('./db');
+const { migrateAccessGrants } = require('./lib/accessGrants');
 
 function addColumnSafe(tableName, columnName, definition) {
   try {
@@ -344,6 +345,9 @@ function runMigrations() {
 
   // Seed DM token placeholder (real value set on first DM login)
   db.exec(`INSERT OR IGNORE INTO campaign_state (key, value) VALUES ('dm_token', '')`);
+
+  // ---- R1-A: Revocable companion and read-only cast credentials ----
+  migrateAccessGrants(db);
 
   // ---- Phase 15.0: Condition Duration Tracking ----
   addColumnSafe('session_states', 'condition_durations_json', "TEXT DEFAULT '{}'");

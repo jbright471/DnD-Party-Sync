@@ -36,7 +36,8 @@ import { ActionableLoreMessage } from '../components/ActionableLoreMessage';
 import { parseLoreMessage } from '../lib/loreParser';
 import {
   Eye, Swords, Users, Gem, Scroll, Sparkles, Map,
-  FlagOff, Plus, BookOpen, ShieldAlert, Send, Zap, NotebookPen, StickyNote, History, Upload
+  FlagOff, Plus, BookOpen, ShieldAlert, Send, Zap, NotebookPen, StickyNote, History, Upload,
+  MonitorUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import socket from '../socket';
@@ -163,6 +164,29 @@ export default function DmDashboard() {
     socket.emit('start_encounter', { encounterId });
   };
 
+  const handleCopyCastLink = async () => {
+    if (!state.dmToken) {
+      toast.error('DM authentication is required to generate a cast link.');
+      return;
+    }
+    try {
+      const response = await fetch('/api/access-grants/cast', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${state.dmToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not generate link');
+      await navigator.clipboard.writeText(`${window.location.origin}${payload.link}`);
+      toast.success('Read-only cast link copied!');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not generate cast link');
+    }
+  };
+
   return (
     <div className="space-y-4 pb-6">
       {/* Modals */}
@@ -267,6 +291,14 @@ export default function DmDashboard() {
             className="font-display border-primary/30 text-primary hover:bg-primary/10"
           >
             <Zap className="h-4 w-4 mr-1" /> Automation
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyCastLink}
+            className="font-display border-primary/30 text-primary hover:bg-primary/10"
+          >
+            <MonitorUp className="h-4 w-4 mr-1" /> Cast Link
           </Button>
           <Button
             variant="outline"
