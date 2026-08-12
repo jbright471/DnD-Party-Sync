@@ -47,12 +47,14 @@ const { getAutomationRules } = require('./lib/automationRules');
 const {
     projectPartyState,
     projectInitiativeState,
+    projectMapState,
     projectTimeline,
 } = require('./lib/clientStateProjection');
 const {
     createPermissionTargetAuthorizer,
     createSocketAuthorizationMiddleware,
 } = require('./lib/socketAuthorization');
+const { createOutboundSocketDelivery } = require('./lib/outboundSocketPolicy');
 const {
     normalizeRollVisibility,
     isPublicRoll,
@@ -94,11 +96,11 @@ const {
 const { createAccessGrantRouter } = require('./routes/accessGrants');
 
 function broadcastAuras() {
-    io.emit('active_auras_sync', getActiveAuras(db));
+    egress.dm('active_auras_sync', getActiveAuras(db));
 }
 
 function broadcastSmartPins() {
-    io.emit('combat_smart_pins_sync', getSmartPins(db));
+    egress.dm('combat_smart_pins_sync', getSmartPins(db));
 }
 
 
@@ -154,6 +156,20 @@ const io = new Server(server, {
     },
 });
 app.set('io', io);
+
+const egress = createOutboundSocketDelivery(io, {
+    projectors: {
+        party_state: (payload, recipient) => projectPartyState(payload, recipient),
+        initiative_state: (payload, recipient) => projectInitiativeState(payload, {
+            ...recipient,
+            permissions: getPermissions(db),
+        }),
+        timeline_update: (payload, recipient) => projectTimeline(payload, recipient),
+        map_state: (payload, recipient) => projectMapState(payload, recipient),
+        world_map_state: (payload, recipient) => projectMapState(payload, recipient),
+    },
+});
+app.set('socketDelivery', egress);
 
 // --- Middleware ---
 app.use(cors());
@@ -562,7 +578,7 @@ app.post('/api/recaps/combat', (req, res) => {
         ).run(recapText, rawLog || '[]', sessionDate || null);
         const recap = db.prepare('SELECT * FROM session_recaps WHERE id = ?').get(result.lastInsertRowid);
         // Broadcast to all clients so SessionArchive updates live
-        io.emit('recaps_updated', db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all());
+        egress.dm('recaps_updated', db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all());
         res.status(201).json(recap);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -602,7 +618,7 @@ function saveCombatState() {
 }
 
 function broadcastCombatState() {
-    io.emit('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
+    egress.broadcast('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
 }
 
 loadCombatState();
@@ -638,7 +654,7 @@ function getResolvedPartyState() {
 function disconnectGrantSockets(grantId) {
     for (const connectedSocket of io.sockets.sockets.values()) {
         if (connectedSocket.accessGrant?.id === grantId) {
-            connectedSocket.emit('access_denied', {
+            egress.send(connectedSocket, 'access_denied', {
                 message: 'This access link was revoked or replaced. Ask your DM for a new link.',
             });
             connectedSocket.disconnect(true);
@@ -652,42 +668,45 @@ app.use('/api/access-grants', createAccessGrantRouter({
     onGrantInvalidated: disconnectGrantSockets,
 }));
 
-function getSocketProjectionContext(socket) {
-    if (socket.dmAuthenticated) return { role: 'dm', characterId: null };
-    if (socket.accessGrant?.role === 'cast') return { role: 'cast', characterId: null };
-    if (socket.accessGrant?.role === 'player') {
-        return { role: 'player', characterId: socket.accessGrant.characterId };
-    }
-    const player = playerSocketMap.get(socket.id);
-    if (player) return { role: 'player', characterId: player.characterId };
-    return { role: 'public', characterId: null };
-}
-
 function forEachConnectedSocket(callback) {
     for (const connectedSocket of io.sockets.sockets.values()) callback(connectedSocket);
 }
 
 function emitProjectedPartyState(socket, resolved = getResolvedPartyState()) {
-    socket.emit('party_state', projectPartyState(resolved, getSocketProjectionContext(socket)));
+    egress.send(socket, 'party_state', resolved);
 }
 
 function emitProjectedInitiativeState(socket, tracker = getTrackerState()) {
-    socket.emit('initiative_state', projectInitiativeState(tracker, {
-        ...getSocketProjectionContext(socket),
-        permissions: getPermissions(db),
-    }));
+    egress.send(socket, 'initiative_state', tracker);
 }
 
 function emitProjectedTimeline(socket, events = getCombatTimeline(db)) {
-    socket.emit('timeline_update', projectTimeline(events, getSocketProjectionContext(socket)));
+    egress.send(socket, 'timeline_update', events);
+}
+
+function getPartyLootState() {
+    const rows = db.prepare('SELECT * FROM shared_loot ORDER BY created_at DESC').all();
+    return rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        category: r.category,
+        rarity: r.rarity,
+        stats_json: r.stats_json,
+        dropped_by: r.dropped_by,
+        created_at: r.created_at,
+        vote_state_json: r.vote_state_json || null,
+    }));
 }
 
 function emitRoleState(socket) {
     emitProjectedPartyState(socket);
     emitProjectedInitiativeState(socket);
     emitProjectedTimeline(socket);
-    socket.emit('permissions_state', getPermissions(db));
-    socket.emit('combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
+    egress.send(socket, 'permissions_state', getPermissions(db));
+    egress.send(socket, 'combat_state_sync', { round: currentCombatRound, turnIndex: currentTurnIndex });
+    egress.send(socket, 'party_loot_state', getPartyLootState());
+    egress.send(socket, 'approval_mode', isApprovalMode);
 }
 
 function broadcastPartyState() {
@@ -704,26 +723,14 @@ function rawBroadcastPartyState() {
 }
 
 function broadcastPartyLoot() {
-    const rows = db.prepare('SELECT * FROM shared_loot ORDER BY created_at DESC').all();
-    const items = rows.map(r => ({
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        category: r.category,
-        rarity: r.rarity,
-        stats_json: r.stats_json,
-        dropped_by: r.dropped_by,
-        created_at: r.created_at,
-        vote_state_json: r.vote_state_json || null,
-    }));
-    io.emit('party_loot_state', items);
+    egress.broadcast('party_loot_state', getPartyLootState());
 }
 
 function broadcastLogs() {
     const logs = db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all();
     const orderedLogs = logs.reverse();
     forEachConnectedSocket(socket => {
-        if (!socket.castView) socket.emit('action_logged', orderedLogs);
+        egress.send(socket, 'action_logged', orderedLogs);
     });
 }
 
@@ -744,7 +751,7 @@ function rawBroadcastInitiative() {
 function broadcastNotes() {
     const notes = db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all();
     forEachConnectedSocket(socket => {
-        if (!socket.castView) socket.emit('notes_state', notes);
+        egress.send(socket, 'notes_state', notes);
     });
 }
 
@@ -752,7 +759,7 @@ function broadcastWorldState() {
     try {
         const time = db.prepare('SELECT value FROM campaign_state WHERE key = "current_time"').get();
         const weather = db.prepare('SELECT value FROM campaign_state WHERE key = "current_weather"').get();
-        io.emit('world_state', {
+        egress.broadcast('world_state', {
             time: JSON.parse(time?.value || '{}'),
             weather: JSON.parse(weather?.value || '{}')
         });
@@ -777,7 +784,7 @@ function broadcastTimelineImmediate() {
 
 function broadcastPermissions() {
     const perms = getPermissions(db);
-    io.emit('permissions_state', perms);
+    egress.dm('permissions_state', perms);
 }
 
 function broadcastWorldMapState() {
@@ -786,9 +793,9 @@ function broadcastWorldMapState() {
         if (map) {
             const markers = db.prepare('SELECT * FROM map_markers WHERE parent_map_id = ?').all(map.id);
             const map_url = map.image_path ? `/api/maps/file/${path.basename(map.image_path)}` : null;
-            io.emit('world_map_state', { ...map, map_url, markers });
+            egress.broadcast('world_map_state', { ...map, map_url, markers });
         } else {
-            io.emit('world_map_state', null);
+            egress.broadcast('world_map_state', null);
         }
     } catch (e) { console.error('[WorldMap] Broadcast error:', e); }
 }
@@ -799,9 +806,9 @@ function broadcastMapState() {
         const tokens = db.prepare('SELECT * FROM map_tokens WHERE map_id = ?').all(map.id);
         const markers = db.prepare('SELECT * FROM map_markers WHERE parent_map_id = ?').all(map.id);
         const image_data = map.image_path ? `/api/maps/file/${path.basename(map.image_path)}` : null;
-        io.emit('map_state', { ...map, image_data, tokens, markers });
+        egress.broadcast('map_state', { ...map, image_data, tokens, markers });
     } else {
-        io.emit('map_state', null);
+        egress.broadcast('map_state', null);
     }
 }
 
@@ -812,7 +819,7 @@ function logAction(actor, description, status = 'applied', effectsJson = null) {
     broadcastLogs();
 }
 
-function resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState, logAction) {
+function resolveLootVote(db, lootId, broadcastPartyLoot, broadcastPartyState, logAction) {
     const item = db.prepare('SELECT * FROM shared_loot WHERE id = ?').get(lootId);
     if (!item || !item.vote_state_json) return;
     const voteState = JSON.parse(item.vote_state_json);
@@ -847,7 +854,7 @@ function resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState
     }
 
     broadcastPartyLoot();
-    io.emit('loot_vote_result', {
+    egress.broadcast('loot_vote_result', {
         lootId,
         winner: winner ? { id: winner.id, name: winner.name } : null,
         winType,
@@ -889,6 +896,9 @@ io.on('connection', (socket) => {
             return db.prepare('SELECT id, name FROM characters WHERE id = ?').get(characterId) || null;
         },
         authorizePlayerTarget: createPermissionTargetAuthorizer(db),
+        emitToSocket(event, payload) {
+            egress.send(socket, event, payload);
+        },
     }));
 
     // DM room join — validates stored token before admitting to dm_room
@@ -897,10 +907,10 @@ io.on('connection', (socket) => {
             socket.join('dm_room');
             socket.dmAuthenticated = true;
             socket.castView = false;
-            socket.emit('dm_room_joined', { success: true });
+            egress.send(socket, 'dm_room_joined', { success: true });
             emitRoleState(socket);
-            socket.emit('action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
-            socket.emit('notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
+            egress.send(socket, 'action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
+            egress.send(socket, 'notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
             const pendingImports = db.prepare('SELECT * FROM pending_imports ORDER BY created_at ASC').all().map(r => ({
                 id: r.id,
                 characterId: r.character_id,
@@ -910,14 +920,14 @@ io.on('connection', (socket) => {
                 diff: JSON.parse(r.diff_json || '{}').diff || {},
                 incomingData: JSON.parse(r.incoming_data_json)
             }));
-            socket.emit('pending_imports_sync', pendingImports);
+            egress.send(socket, 'pending_imports_sync', pendingImports);
         }
     });
 
     socket.on('register_cast_view', (_payload = {}, callback) => {
         if (socket.accessGrant?.role !== 'cast') {
             const denied = { success: false, message: 'This cast link is invalid. Ask the DM for a new link.' };
-            socket.emit('access_denied', denied);
+            egress.send(socket, 'access_denied', denied);
             callback?.(denied);
             return;
         }
@@ -934,20 +944,20 @@ io.on('connection', (socket) => {
 
     // Relay DM prep note mutations to dm_room so other DM tabs stay in sync
     socket.on('relay_dm_note', ({ event, data }) => {
-        if (socket.dmAuthenticated) {
-            socket.to('dm_room').emit(event, data);
+        const allowedRelayEvents = new Set(['dm_note_created', 'dm_note_updated', 'dm_note_deleted']);
+        if (socket.dmAuthenticated && allowedRelayEvents.has(event)) {
+            egress.dm(event, data, { exceptSocketId: socket.id });
         }
     });
 
     emitRoleState(socket);
-    socket.emit('approval_mode', isApprovalMode);
 
     // ── Companion view pull ───────────────────────────────────────────────────
     // Emits party_state only to the requesting socket (used by /companion/:id)
     socket.on('request_party_state', (_payload = {}, callback) => {
         if (socket.accessGrant?.role !== 'player') {
             const denied = { success: false, message: 'This companion link is invalid. Ask the DM for a new link.' };
-            socket.emit('access_denied', denied);
+            egress.send(socket, 'access_denied', denied);
             callback?.(denied);
             return;
         }
@@ -1005,7 +1015,7 @@ io.on('connection', (socket) => {
     socket.on('save_pins_to_template', ({ encounterId }) => {
         const { savePinsToTemplate } = require('./services/effects-engine/smartPins');
         const res = savePinsToTemplate(db, encounterId);
-        socket.emit('pins_saved_to_template_result', res);
+        egress.send(socket, 'pins_saved_to_template_result', res);
     });
 
     socket.on('log_action', async ({ actor, description, useLlm }, callback) => {
@@ -1039,7 +1049,7 @@ io.on('connection', (socket) => {
         } catch (e) {
             console.error("[DB] Error saving approval mode state", e);
         }
-        io.emit('approval_mode', isApprovalMode);
+        egress.dm('approval_mode', isApprovalMode);
         logAction('DM', `Approval Mode is now ${isApprovalMode ? 'ON' : 'OFF'}.`);
     });
 
@@ -1137,7 +1147,7 @@ io.on('connection', (socket) => {
                 diff: JSON.parse(r.diff_json || '{}').diff || {},
                 incomingData: JSON.parse(r.incoming_data_json)
             }));
-            io.emit('pending_imports_sync', remaining);
+            egress.dm('pending_imports_sync', remaining);
         } catch (err) {
             console.error('Error resolving pending import:', err);
         }
@@ -1231,7 +1241,7 @@ io.on('connection', (socket) => {
                 const char = db.prepare('SELECT name FROM characters WHERE id = ?').get(characterId);
                 logAction(actor || 'Player', `${char?.name || 'Character'}: ${delta < 0 ? 'damage' : 'heal'} ${Math.abs(delta)} HP`, 'pending',
                     JSON.stringify({ type: 'hp', characterId, delta, damageType }));
-                socket.emit('rules_error', { message: perm.reason });
+                egress.send(socket, 'rules_error', { message: perm.reason });
                 return;
             }
         }
@@ -1283,15 +1293,15 @@ io.on('connection', (socket) => {
                 if (!passed) {
                     dropConcentrationEvent(db, characterId);
                     broadcastInitiative();
-                    io.emit('concentration_broken', { characterId, characterName: charName, spellName, roll, total, dc });
+                    egress.broadcast('concentration_broken', { characterId, characterName: charName, spellName, roll, total, dc });
                 } else {
-                    io.emit('concentration_maintained', { characterId, characterName: charName, spellName, roll, total, dc });
+                    egress.broadcast('concentration_maintained', { characterId, characterName: charName, spellName, roll, total, dc });
                 }
                 broadcastTimeline();
             } else if (delta < 0 && result.concentrationCheck && shouldPromptForConcentration) {
                 // Manual roll mode — let client decide
                 const state = getSessionState(db, characterId);
-                io.emit('concentration_check_required', { characterId, spellName: state?.concentratingOn, dc: result.concentrationCheck.dc });
+                egress.character(characterId, 'concentration_check_required', { characterId, spellName: state?.concentratingOn, dc: result.concentrationCheck.dc });
             }
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
@@ -1302,7 +1312,7 @@ io.on('connection', (socket) => {
             // Emit dedicated HP-change event for DM flash effects
             const hpChar = getCharacterData(db, characterId);
             if (hpChar) {
-                io.emit('hp_change_event', {
+                egress.broadcast('hp_change_event', {
                     characterId,
                     characterName: hpChar.name,
                     currentHp: result.newHp,
@@ -1315,7 +1325,7 @@ io.on('connection', (socket) => {
                 });
 
                 // Also pipe into roll feed so DMEffectStream picks it up
-                io.to('dm_room').emit('roll_feed_event', {
+                egress.dm('roll_feed_event', {
                     id: Date.now(),
                     actor: actor || 'System',
                     characterId: String(characterId),
@@ -1363,7 +1373,7 @@ io.on('connection', (socket) => {
         if (effectiveLevel > 0) {
             const slotResult = useSpellSlotEvent(db, characterId, effectiveLevel);
             if (!slotResult.success) {
-                socket.emit('rules_error', { message: slotResult.error });
+                egress.send(socket, 'rules_error', { message: slotResult.error });
                 return;
             }
         }
@@ -1372,7 +1382,7 @@ io.on('connection', (socket) => {
         if (isConcentration) {
             const concResult = castConcentrationSpellEvent(db, characterId, spellName);
             if (!concResult.success) {
-                socket.emit('rules_error', { message: concResult.error });
+                egress.send(socket, 'rules_error', { message: concResult.error });
                 // Slot already spent — this is correct 5e behavior (slot consumed even if concentration fails)
             }
         }
@@ -1392,7 +1402,7 @@ io.on('connection', (socket) => {
         logAction(actor || charName, `${charName} cast ${spellName} at ${levelLabel}${upcastNote}`);
 
         // Broadcast to DM roll feed
-        io.to('dm_room').emit('dm_roll_feed', {
+        egress.dm('dm_roll_feed', {
             actor: charName,
             characterId,
             label: spellName,
@@ -1429,7 +1439,7 @@ io.on('connection', (socket) => {
             broadcastInitiative();
             broadcastTimeline();
         }
-        else socket.emit('rules_error', { message: result.error });
+        else egress.send(socket, 'rules_error', { message: result.error });
     });
 
     socket.on('drop_concentration', ({ characterId, actor, requestId }) => {
@@ -1513,7 +1523,7 @@ io.on('connection', (socket) => {
             if (!sourceState?.concentrationId || sourceState.concentratingOn !== resolvedBuffData.name) {
                 const concentration = castConcentrationSpellEvent(db, sourceCharacterId, resolvedBuffData.name, null);
                 if (!concentration.success) {
-                    socket.emit('rules_error', { message: concentration.error });
+                    egress.send(socket, 'rules_error', { message: concentration.error });
                     return;
                 }
                 resolvedBuffData.concentrationId = concentration.concentrationId;
@@ -1592,7 +1602,7 @@ io.on('connection', (socket) => {
             broadcastPartyState();
             broadcastTimeline();
         }
-        else socket.emit('rules_error', { message: result.error });
+        else egress.send(socket, 'rules_error', { message: result.error });
     });
 
     socket.on('spend_hit_die', ({ characterId, dieType, actor, requestId }) => {
@@ -1611,7 +1621,7 @@ io.on('connection', (socket) => {
             logAction(actor || charName, result.logMessage);
 
             // Send roll to DM feed
-            io.to('dm_room').emit('dm_roll_feed', {
+            egress.dm('dm_roll_feed', {
                 actor: charName,
                 characterId,
                 label: `Hit Die (${dieType})`,
@@ -1627,11 +1637,11 @@ io.on('connection', (socket) => {
             });
 
             // Notify the spending player
-            socket.emit('hit_die_result', result);
+            egress.send(socket, 'hit_die_result', result);
             broadcastPartyState();
             broadcastTimeline();
         } else {
-            socket.emit('rules_error', { message: result.error });
+            egress.send(socket, 'rules_error', { message: result.error });
         }
     });
 
@@ -1650,7 +1660,7 @@ io.on('connection', (socket) => {
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
             broadcastTimeline();
-            socket.emit('advance_time', { minutes: 60 });
+            egress.send(socket, 'advance_time', { minutes: 60 });
         }
     });
 
@@ -1669,7 +1679,7 @@ io.on('connection', (socket) => {
             logAction(actor || 'System', result.logMessage);
             broadcastPartyState();
             broadcastTimeline();
-            socket.emit('advance_time', { minutes: 480 });
+            egress.send(socket, 'advance_time', { minutes: 480 });
         }
     });
 
@@ -1690,7 +1700,7 @@ io.on('connection', (socket) => {
                         const attunedCount = inv.filter(i => i.isAttuned && i.id !== itemId && i.name !== itemId).length;
                         const item = inv.find(i => i.id === itemId || i.name === itemId);
                         if (item && !item.isAttuned && attunedCount >= 3) {
-                            socket.emit('rules_error', { message: "Maximum attunement slots (3) reached!" });
+                            egress.send(socket, 'rules_error', { message: "Maximum attunement slots (3) reached!" });
                             return inv;
                         }
                     }
@@ -1728,13 +1738,13 @@ io.on('connection', (socket) => {
 
     function emitSaveResolved({ characterId, ability, dc, roll, passed, charName, rollVisibility }) {
         if (rollVisibility === 'public') {
-            io.emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+            egress.broadcast('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
             return;
         }
 
-        io.to('dm_room').emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+        egress.dm('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
         if (rollVisibility === 'private') {
-            socket.emit('save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
+            egress.send(socket, 'save_resolved', { characterId, ability, dc, roll, passed, charName, rollVisibility });
             return;
         }
 
@@ -1796,9 +1806,9 @@ io.on('connection', (socket) => {
             timestamp: new Date().toISOString(),
         };
         const routing = buildRollRouting(feedEvent, rollVisibility);
-        if (routing.publicEvent) io.emit('roll_feed_event', routing.publicEvent);
-        else io.to('dm_room').emit('roll_feed_event', routing.dmEvent);
-        if (routing.rollerEvent) socket.emit('secret_roll_ack', routing.rollerEvent);
+        if (routing.publicEvent) egress.broadcast('roll_feed_event', routing.publicEvent);
+        else egress.dm('roll_feed_event', routing.dmEvent);
+        if (routing.rollerEvent) egress.send(socket, 'secret_roll_ack', routing.rollerEvent);
 
         // ── Sync-Linked Dice Rolls: auto-resolve pending saves ──
         const normalizedRollType = String(rollType || '').toLowerCase().replace(/\s+/g, '_');
@@ -1853,7 +1863,7 @@ io.on('connection', (socket) => {
             insertPending.run(charId, dc || 15, normAbility, JSON.stringify(onFailEffects || []), JSON.stringify(onPassEffects || []), requestedVisibility);
             for (const [socketId, info] of playerSocketMap.entries()) {
                 if (info.characterId === charId) {
-                    io.to(socketId).emit('pending_save_request', {
+                    egress.socketId(socketId, 'pending_save_request', {
                         dc: dc || 15,
                         ability: normAbility,
                         source: 'DM',
@@ -1867,25 +1877,25 @@ io.on('connection', (socket) => {
     });
 
     socket.on('spawn_monster', (monsterData) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         spawnMonster(monsterData);
         broadcastInitiative();
         logAction('DM', `Spawned ${monsterData.name} into initiative.`);
     });
 
     socket.on('configure_boss_phases', ({ trackerId, phases }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const result = configureBossPhases(db, trackerId, phases);
-        if (!result.success) { socket.emit('rules_error', { message: result.error }); return; }
+        if (!result.success) { egress.send(socket, 'rules_error', { message: result.error }); return; }
         broadcastInitiative();
-        socket.emit('boss_phases_configured', { trackerId, ...result });
+        egress.send(socket, 'boss_phases_configured', { trackerId, ...result });
     });
 
     socket.on('transition_boss_phase', ({ trackerId, phaseIndex = null }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const entity = db.prepare('SELECT entity_name FROM initiative_tracker WHERE id = ?').get(trackerId);
         const result = transitionBossPhase(db, trackerId, phaseIndex);
-        if (!result.success) { socket.emit('rules_error', { message: result.error }); return; }
+        if (!result.success) { egress.send(socket, 'rules_error', { message: result.error }); return; }
         if (!result.unchanged) {
             writeAuditEvent(db, {
                 sessionRound: currentCombatRound,
@@ -1908,11 +1918,11 @@ io.on('connection', (socket) => {
             broadcastInitiative();
             broadcastTimeline();
         }
-        socket.emit('boss_phase_transitioned', { trackerId, ...result });
+        egress.send(socket, 'boss_phase_transitioned', { trackerId, ...result });
     });
 
     socket.on('toggle_entity_visibility', ({ entityId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const entity = db.prepare('SELECT is_hidden FROM initiative_tracker WHERE id = ?').get(entityId);
         if (entity) {
             db.prepare('UPDATE initiative_tracker SET is_hidden = ? WHERE id = ?').run(entity.is_hidden ? 0 : 1, entityId);
@@ -1921,7 +1931,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('play_sound', ({ soundName, url, action }) => {
-        io.emit('sound_event', { soundName, url, action });
+        egress.broadcast('sound_event', { soundName, url, action });
         logAction('DM', `${action === 'play' ? 'Started' : 'Stopped'} atmospheric sound: ${soundName}`);
     });
 
@@ -2021,7 +2031,7 @@ io.on('connection', (socket) => {
                         logAction('System', `${titleCase} has worn off ${activeEntity.entity_name}.`);
 
                         // Broadcast to DM effect stream
-                        io.to('dm_room').emit('roll_feed_event', {
+                        egress.dm('roll_feed_event', {
                             id: Date.now(),
                             actor: 'System',
                             characterId: String(activeEntity.character_id),
@@ -2041,7 +2051,7 @@ io.on('connection', (socket) => {
                 // Emit tick event to the specific player's socket
                 for (const [socketId, info] of playerSocketMap.entries()) {
                     if (info.characterId === activeEntity.character_id) {
-                        io.to(socketId).emit('tick_conditions', {
+                        egress.socketId(socketId, 'tick_conditions', {
                             characterId: activeEntity.character_id,
                             expired: tickResult.expired,
                             remaining: tickResult.remaining,
@@ -2097,23 +2107,23 @@ io.on('connection', (socket) => {
     });
 
     socket.on('auto_roll_initiative', () => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const tracker = rollAllInitiative();
         broadcastInitiative();
         logAction('DM', 'Rolled initiative for all combatants.');
-        socket.emit('auto_roll_result', { rolls: tracker.map(e => ({ name: e.entity_name, initiative: e.initiative })) });
+        egress.send(socket, 'auto_roll_result', { rolls: tracker.map(e => ({ name: e.entity_name, initiative: e.initiative })) });
     });
 
     socket.on('dismiss_dead', () => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const result = db.prepare("DELETE FROM initiative_tracker WHERE entity_type IN ('monster', 'npc') AND current_hp <= 0").run();
         broadcastInitiative();
         logAction('DM', `Dismissed ${result.changes} dead combatant(s) from tracker.`);
-        socket.emit('dismiss_dead_result', { dismissed: result.changes });
+        egress.send(socket, 'dismiss_dead_result', { dismissed: result.changes });
     });
 
     socket.on('clear_all_conditions', () => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const pcEntries = db.prepare("SELECT character_id FROM initiative_tracker WHERE entity_type = 'pc' AND character_id IS NOT NULL").all();
         let cleared = 0;
         for (const entry of pcEntries) {
@@ -2128,7 +2138,7 @@ io.on('connection', (socket) => {
         broadcastPartyState();
         broadcastInitiative();
         logAction('DM', `Cleared conditions from ${cleared} character(s).`);
-        socket.emit('clear_conditions_result', { cleared });
+        egress.send(socket, 'clear_conditions_result', { cleared });
     });
 
     socket.on('add_marker', ({ mapId, name, type, x, y, linkedMapId, description }) => {
@@ -2166,34 +2176,41 @@ io.on('connection', (socket) => {
     // ---- Voice Chat (WebRTC Signaling) ----
     socket.on('voice_join', ({ characterId, playerName } = {}) => {
         voiceRoom.set(socket.id, { characterId: characterId || null, playerName: playerName || 'Adventurer' });
+        socket.join('voice_room');
         const existingPeers = [...voiceRoom.entries()]
             .filter(([id]) => id !== socket.id)
             .map(([id, info]) => ({ socketId: id, ...info }));
-        socket.emit('voice_existing_peers', existingPeers);
-        socket.broadcast.emit('voice_peer_joined', { socketId: socket.id, characterId: characterId || null, playerName: playerName || 'Adventurer' });
-        io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+        egress.send(socket, 'voice_existing_peers', existingPeers);
+        egress.except(socket, 'voice_peer_joined', { socketId: socket.id, characterId: characterId || null, playerName: playerName || 'Adventurer' });
+        egress.broadcast('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
     });
 
     socket.on('voice_leave', () => {
+        if (!voiceRoom.has(socket.id)) return;
         voiceRoom.delete(socket.id);
-        io.emit('voice_peer_left', { socketId: socket.id });
-        io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+        socket.leave('voice_room');
+        egress.broadcast('voice_peer_left', { socketId: socket.id });
+        egress.broadcast('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
     });
 
     socket.on('voice_offer', ({ to, offer }) => {
-        io.to(to).emit('voice_offer', { from: socket.id, offer });
+        if (!voiceRoom.has(socket.id) || !voiceRoom.has(to)) return;
+        egress.socketId(to, 'voice_offer', { from: socket.id, offer });
     });
 
     socket.on('voice_answer', ({ to, answer }) => {
-        io.to(to).emit('voice_answer', { from: socket.id, answer });
+        if (!voiceRoom.has(socket.id) || !voiceRoom.has(to)) return;
+        egress.socketId(to, 'voice_answer', { from: socket.id, answer });
     });
 
     socket.on('voice_ice_candidate', ({ to, candidate }) => {
-        io.to(to).emit('voice_ice_candidate', { from: socket.id, candidate });
+        if (!voiceRoom.has(socket.id) || !voiceRoom.has(to)) return;
+        egress.socketId(to, 'voice_ice_candidate', { from: socket.id, candidate });
     });
 
     socket.on('voice_speaking', ({ speaking }) => {
-        socket.broadcast.emit('voice_peer_speaking', { socketId: socket.id, speaking });
+        if (!voiceRoom.has(socket.id)) return;
+        egress.except(socket, 'voice_peer_speaking', { socketId: socket.id, speaking });
     });
 
     socket.on('update_initiative_hp', ({ trackerId, delta }) => {
@@ -2306,25 +2323,25 @@ io.on('connection', (socket) => {
         if (!effects || !Array.isArray(effects) || effects.length === 0) return;
         const records = previewPartyEffect(db, effects, targets || 'party');
         if (!records || records.length === 0 || !records.some(r => r.success)) {
-            socket.emit('rules_error', { message: 'Effect preview yielded no valid targets or all failed.' });
+            egress.send(socket, 'rules_error', { message: 'Effect preview yielded no valid targets or all failed.' });
             return;
         }
 
         const pendingId = randomUUID();
         const timeout = setTimeout(() => {
             pendingEffects.delete(pendingId);
-            io.emit('effect_preview_expired', { pendingId });
+            egress.dm('effect_preview_expired', { pendingId });
             logAction(actor || 'System', `Pending effect request expired.`);
         }, 60000); // 60 seconds
 
         pendingEffects.set(pendingId, { timeout, payload: { effects, targets, actor }, records });
-        io.emit('incoming_effect_preview', { pendingId, actor, records });
+        egress.dm('incoming_effect_preview', { pendingId, actor, records });
     });
 
     socket.on('resolve_pending_effect', ({ pendingId, action }) => {
         const pending = pendingEffects.get(pendingId);
         if (!pending) {
-            socket.emit('rules_error', { message: 'Pending effect not found or expired.' });
+            egress.send(socket, 'rules_error', { message: 'Pending effect not found or expired.' });
             return;
         }
 
@@ -2344,9 +2361,9 @@ io.on('connection', (socket) => {
                 const summary = results.filter(r => r.success).map(r => r.logMessage).join(' | ');
                 logAction(actor || 'DM', `Party effect applied — ${summary}`);
             }
-            io.emit('effect_preview_resolved', { pendingId, action });
+            egress.dm('effect_preview_resolved', { pendingId, action });
         } else {
-            io.emit('effect_preview_resolved', { pendingId, action: 'reject' });
+            egress.dm('effect_preview_resolved', { pendingId, action: 'reject' });
             logAction(pending.payload.actor || 'DM', `Effect request rejected.`);
         }
     });
@@ -2396,7 +2413,7 @@ io.on('connection', (socket) => {
                     // Notify the player's socket
                     for (const [socketId, info] of playerSocketMap.entries()) {
                         if (info.characterId === target.id) {
-                            io.to(socketId).emit('pending_save_request', {
+                            egress.socketId(socketId, 'pending_save_request', {
                                 dc: preset.save_dc,
                                 ability: normAbility,
                                 source: `Macro: ${preset.name}`,
@@ -2458,14 +2475,14 @@ io.on('connection', (socket) => {
     });
 
     socket.on('refresh_quests_global', () => {
-        io.emit('refresh_quests');
+        egress.broadcast('refresh_quests');
     });
 
     socket.on('register_player', ({ playerName } = {}, callback) => {
         if (socket.castView) return;
         if (socket.accessGrant?.role !== 'player') {
             const denied = { success: false, message: 'A valid player access link is required.' };
-            socket.emit('access_denied', denied);
+            egress.send(socket, 'access_denied', denied);
             callback?.(denied);
             return;
         }
@@ -2474,29 +2491,26 @@ io.on('connection', (socket) => {
             playerName: playerName || 'Player',
         });
         emitRoleState(socket);
-        socket.emit('action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
-        socket.emit('notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
+        egress.send(socket, 'action_logged', db.prepare('SELECT * FROM action_log ORDER BY id DESC LIMIT 100').all().reverse());
+        egress.send(socket, 'notes_state', db.prepare('SELECT * FROM party_notes ORDER BY updated_at DESC').all());
         callback?.({ success: true, role: 'player', characterId: socket.accessGrant.characterId });
     });
 
     socket.on('dm_whisper', ({ targetCharacterId, message }) => {
         for (const [socketId, info] of playerSocketMap.entries()) {
-            if (info.characterId === targetCharacterId) io.to(socketId).emit('whisper_received', { message, from: 'DM', timestamp: new Date().toISOString() });
+            if (info.characterId === targetCharacterId) egress.socketId(socketId, 'whisper_received', { message, from: 'DM', timestamp: new Date().toISOString() });
         }
-        socket.emit('whisper_sent', { targetCharacterId, message });
+        egress.send(socket, 'whisper_sent', { targetCharacterId, message });
     });
 
     socket.on('blind_roll_request', ({ targetCharacterId, rollType, dc }) => {
         for (const [socketId, info] of playerSocketMap.entries()) {
-            if (info.characterId === targetCharacterId) io.to(socketId).emit('blind_roll_requested', { rollType, dc, timestamp: new Date().toISOString() });
+            if (info.characterId === targetCharacterId) egress.socketId(socketId, 'blind_roll_requested', { rollType, dc, timestamp: new Date().toISOString() });
         }
     });
 
     socket.on('blind_roll_response', ({ rollType, result, characterId, ability }) => {
-        for (const [socketId, info] of playerSocketMap.entries()) {
-            if (info.characterId !== characterId) io.to(socketId).emit('blind_roll_result', { characterId, rollType, result, timestamp: new Date().toISOString() });
-        }
-        socket.broadcast.emit('blind_roll_result_dm', { characterId, rollType, result, timestamp: new Date().toISOString() });
+        egress.dm('blind_roll_result_dm', { characterId, rollType, result, timestamp: new Date().toISOString() });
 
         // Auto-resolve any matching pending save
         if (rollType === 'saving_throw' && characterId && ability) {
@@ -2538,7 +2552,7 @@ io.on('connection', (socket) => {
             broadcastLogs();
             await backupDatabase();
             const recaps = db.prepare('SELECT * FROM session_recaps ORDER BY created_at DESC').all();
-            io.emit('recaps_updated', recaps);
+            egress.dm('recaps_updated', recaps);
             callback?.({ success: true, recap: recapText });
         } catch (err) { console.error('[Session] Error ending session:', err.message); callback?.({ success: false, error: err.message }); }
     });
@@ -2563,12 +2577,12 @@ io.on('connection', (socket) => {
             const item = db.prepare('SELECT name FROM shared_loot WHERE id = ?').get(lootId);
             logAction(characterName || 'Player', `wants to claim ${item?.name || 'item'} from loot pool`, 'pending',
                 JSON.stringify({ type: 'loot_claim', lootId, characterId, characterName }));
-            socket.emit('rules_error', { message: perm.reason });
+            egress.send(socket, 'rules_error', { message: perm.reason });
             return;
         }
 
         const item = db.prepare('SELECT * FROM shared_loot WHERE id = ?').get(lootId);
-        if (!item) { socket.emit('rules_error', { message: 'Item already claimed!' }); return; }
+        if (!item) { egress.send(socket, 'rules_error', { message: 'Item already claimed!' }); return; }
 
         // Remove from pool
         db.prepare('DELETE FROM shared_loot WHERE id = ?').run(lootId);
@@ -2606,7 +2620,7 @@ io.on('connection', (socket) => {
         logAction(characterName || 'Player', `claimed ${item.name} from the party loot pool`);
 
         // Pipe to DM effect stream
-        io.to('dm_room').emit('roll_feed_event', {
+        egress.dm('roll_feed_event', {
             id: Date.now(),
             actor: characterName || 'Player',
             characterId: String(characterId),
@@ -2626,13 +2640,13 @@ io.on('connection', (socket) => {
     });
 
     socket.on('loot_vote_open', ({ lootId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const item = db.prepare('SELECT * FROM shared_loot WHERE id = ?').get(lootId);
         if (!item) return;
         const voteState = { status: 'open', votes: {} };
         db.prepare('UPDATE shared_loot SET vote_state_json = ? WHERE id = ?').run(JSON.stringify(voteState), lootId);
         broadcastPartyLoot();
-        io.emit('loot_vote_opened', { lootId, itemName: item.name });
+        egress.broadcast('loot_vote_opened', { lootId, itemName: item.name });
     });
 
     socket.on('loot_vote_cast', ({ lootId, vote, characterId, characterName }) => {
@@ -2649,18 +2663,18 @@ io.on('connection', (socket) => {
             .filter(p => p.characterId)
             .map(p => String(p.characterId));
         const allVoted = connectedCharIds.length > 0 && connectedCharIds.every(id => voteState.votes[id]);
-        if (allVoted) resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState, logAction);
+        if (allVoted) resolveLootVote(db, lootId, broadcastPartyLoot, broadcastPartyState, logAction);
     });
 
     socket.on('loot_vote_cancel', ({ lootId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         db.prepare('UPDATE shared_loot SET vote_state_json = NULL WHERE id = ?').run(lootId);
         broadcastPartyLoot();
     });
 
     socket.on('loot_vote_force_resolve', ({ lootId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
-        resolveLootVote(db, lootId, io, broadcastPartyLoot, broadcastPartyState, logAction);
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
+        resolveLootVote(db, lootId, broadcastPartyLoot, broadcastPartyState, logAction);
     });
 
     socket.on('delete_character', ({ characterId }) => {
@@ -2677,33 +2691,33 @@ io.on('connection', (socket) => {
 
     // ── Resource Permissions ────────────────────────────────────────────────
     socket.on('update_permissions', ({ permissions }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const updated = setPermissions(db, permissions);
         broadcastPermissions();
         logAction('DM', `Updated resource permissions: ${JSON.stringify(updated)}`);
     });
 
     socket.on('refresh_permissions', () => {
-        socket.emit('permissions_state', getPermissions(db));
+        egress.send(socket, 'permissions_state', getPermissions(db));
     });
 
     // ── Event Reversal (Undo) ───────────────────────────────────────────────
     socket.on('reverse_event', ({ eventId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
         const result = reverseEvent(db, eventId, 'DM', applyDamageEvent, applyHealEvent, applyConditionEvent, removeConditionEvent);
         if (result.success) {
             broadcastPartyState();
             broadcastTimelineImmediate();
             logAction('DM', result.description);
         } else {
-            socket.emit('rules_error', { message: result.error });
+            egress.send(socket, 'rules_error', { message: result.error });
         }
     });
 
     // ── Group Undo ────────────────────────────────────────────────────────────
     socket.on('reverse_group', ({ groupId }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
-        if (!groupId) { socket.emit('rules_error', { message: 'groupId required' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
+        if (!groupId) { egress.send(socket, 'rules_error', { message: 'groupId required' }); return; }
 
         const REVERSIBLE = ['damage', 'heal', 'condition_applied', 'condition_removed'];
         const groupEvents = db.prepare(
@@ -2711,7 +2725,7 @@ io.on('connection', (socket) => {
         ).all(groupId, ...REVERSIBLE);
 
         if (groupEvents.length === 0) {
-            socket.emit('rules_error', { message: 'No reversible events in this group (already undone?)' });
+            egress.send(socket, 'rules_error', { message: 'No reversible events in this group (already undone?)' });
             return;
         }
 
@@ -2733,13 +2747,13 @@ io.on('connection', (socket) => {
     // effects: Array<{ type: 'damage'|'heal'|'condition'|'remove_condition', value?: number, damageType?: string, condition?: string }>
     // requestId is used as group_id so all child events can be correlated in the Combat Log.
     socket.on('apply_aoe_effect', ({ requestId, targets, effects, actor }) => {
-        if (!socket.dmAuthenticated) { socket.emit('rules_error', { message: 'DM only' }); return; }
-        if (!Array.isArray(targets) || targets.length === 0) { socket.emit('rules_error', { message: 'No targets specified' }); return; }
-        if (!Array.isArray(effects) || effects.length === 0) { socket.emit('rules_error', { message: 'No effects specified' }); return; }
+        if (!socket.dmAuthenticated) { egress.send(socket, 'rules_error', { message: 'DM only' }); return; }
+        if (!Array.isArray(targets) || targets.length === 0) { egress.send(socket, 'rules_error', { message: 'No targets specified' }); return; }
+        if (!Array.isArray(effects) || effects.length === 0) { egress.send(socket, 'rules_error', { message: 'No effects specified' }); return; }
 
         // Resolve targets via effectEngine (handles both characters and monsters)
         const resolved = resolveTargets(db, targets.map(t => ({ id: Number(t.id), type: t.type })));
-        if (resolved.length === 0) { socket.emit('rules_error', { message: 'No valid targets found' }); return; }
+        if (resolved.length === 0) { egress.send(socket, 'rules_error', { message: 'No valid targets found' }); return; }
 
         // Use requestId as both idempotency base and group_id for batch correlation.
         // Per-target requestId suffix prevents cross-target dedup collisions.
@@ -2813,7 +2827,7 @@ io.on('connection', (socket) => {
 
         broadcastPartyState();
         broadcastTimelineImmediate();
-        socket.emit('aoe_effect_result', { groupId, records });
+        egress.send(socket, 'aoe_effect_result', { groupId, records });
         logAction(actor || 'DM', `AoE [${effects.map(e => e.type).join('+')}] → ${resolved.map(t => t.name).join(', ')}`);
     });
 
@@ -2821,8 +2835,8 @@ io.on('connection', (socket) => {
         playerSocketMap.delete(socket.id);
         if (voiceRoom.has(socket.id)) {
             voiceRoom.delete(socket.id);
-            io.emit('voice_peer_left', { socketId: socket.id });
-            io.emit('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
+            egress.broadcast('voice_peer_left', { socketId: socket.id });
+            egress.broadcast('voice_room_state', [...voiceRoom.entries()].map(([id, info]) => ({ socketId: id, ...info })));
         }
     });
 });

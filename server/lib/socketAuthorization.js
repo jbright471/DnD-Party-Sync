@@ -278,6 +278,7 @@ function bindPlayerPayload(
 function createSocketAuthorizationMiddleware(socket, {
   resolveCharacterIdentity = () => null,
   authorizePlayerTarget = () => false,
+  emitToSocket = () => false,
 } = {}) {
   return function authorizeSocketPacket(packet, next) {
     const [event] = packet;
@@ -285,7 +286,7 @@ function createSocketAuthorizationMiddleware(socket, {
     const role = getSocketRole(socket);
 
     if (!canInvoke(classification, event, role)) {
-      socket.emit('authorization_error', { ...DENIED_ERROR });
+      emitToSocket('authorization_error', { ...DENIED_ERROR });
       return next(new Error(DENIED_ERROR.message));
     }
 
@@ -303,7 +304,7 @@ function createSocketAuthorizationMiddleware(socket, {
             resolveCharacterIdentity,
             authorizePlayerTarget,
           )) {
-        socket.emit('authorization_error', { ...SCOPE_ERROR });
+        emitToSocket('authorization_error', { ...SCOPE_ERROR });
         return next(new Error(SCOPE_ERROR.message));
       }
     }

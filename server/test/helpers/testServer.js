@@ -95,6 +95,9 @@ function createTestServer(db, { principals = {} } = {}) {
           return db.prepare('SELECT id, name FROM characters WHERE id = ?').get(characterId) || null;
         },
         authorizePlayerTarget: createPermissionTargetAuthorizer(db),
+        emitToSocket(event, payload) {
+          socket.emit(event, payload);
+        },
       }));
 
       socket.on('register_player', ({ playerName }, callback) => {

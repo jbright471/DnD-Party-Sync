@@ -54,9 +54,9 @@ router.post('/', async (req, res) => {
                 JSON.stringify(validation)
             );
             
-            const io = req.app.get('io');
-            if (io) {
-                io.emit('pending_import_created', {
+            const egress = req.app.get('socketDelivery');
+            if (egress) {
+                egress.dm('pending_import_created', {
                     id: result.lastInsertRowid,
                     characterId: null,
                     playerName: character.name,
@@ -138,9 +138,9 @@ router.put('/:id/sync', async (req, res) => {
                 JSON.stringify(validation)
             );
             
-            const io = req.app.get('io');
-            if (io) {
-                io.emit('pending_import_created', {
+            const egress = req.app.get('socketDelivery');
+            if (egress) {
+                egress.dm('pending_import_created', {
                     id: result.lastInsertRowid,
                     characterId: id,
                     playerName: parsed.name,
@@ -235,9 +235,9 @@ router.post('/pdf', upload.single('pdf'), async (req, res) => {
                 JSON.stringify(validation)
             );
             
-            const io = req.app.get('io');
-            if (io) {
-                io.emit('pending_import_created', {
+            const egress = req.app.get('socketDelivery');
+            if (egress) {
+                egress.dm('pending_import_created', {
                     id: result.lastInsertRowid,
                     characterId: null,
                     playerName: charObj.name,
