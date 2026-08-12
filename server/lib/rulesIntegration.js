@@ -376,6 +376,11 @@ function castConcentrationSpellEvent(db, characterId, spellName, slotLevel = nul
     const char = getCharacterData(db, characterId);
     const state = getSessionState(db, characterId);
     if (!char || !state) return { success: false, error: 'Character not found' };
+    if (slotLevel !== null) {
+      const slotResult = useSpellSlot(char.spellSlots, state.spellSlotsUsed, slotLevel);
+      if (!slotResult.success) return { success: false, error: slotResult.error };
+      state.spellSlotsUsed = slotResult.newSlotsUsed;
+    }
     const previousConcentrationId = state.concentrationId;
     const concChange = resolveConcentrationChange(state.concentratingOn, spellName, state.activeBuffs);
     state.activeBuffs = state.activeBuffs.filter(b => !concChange.droppedBuffIds.includes(b.id));
@@ -389,11 +394,6 @@ function castConcentrationSpellEvent(db, characterId, spellName, slotLevel = nul
       : { removedBuffIds: [], affectedCharacterIds: [], affectedTrackerIds: [] };
     state.concentratingOn = spellName;
     state.concentrationId = crypto.randomUUID();
-    if (slotLevel !== null) {
-      const slotResult = useSpellSlot(char.spellSlots, state.spellSlotsUsed, slotLevel);
-      if (!slotResult.success) return { success: false, error: slotResult.error };
-      state.spellSlotsUsed = slotResult.newSlotsUsed;
-    }
     saveSessionState(db, state);
     return {
       success: true,

@@ -79,6 +79,52 @@ describe('Round-Teardown & Severe State Changes', () => {
     expect(getSessionState(db, 1).concentrationId).toBeNull();
   });
 
+  it('preserves existing concentration and all linked buffs when a replacement slot is unavailable', () => {
+    db.prepare("UPDATE characters SET data_json = ? WHERE id = 1").run(JSON.stringify({
+      baseMaxHp: 20,
+      baseAc: 16,
+      spellSlots: { 1: 1 },
+    }));
+    db.prepare(`
+      INSERT INTO characters (id, name, class, level, max_hp, current_hp, ac, stats, inventory, data_json)
+      VALUES (2, 'Blessed Ally', 'Rogue', 5, 18, 18, 14, '{}', '[]', '{}')
+    `).run();
+    db.prepare(`
+      INSERT INTO session_states (character_id, current_hp, temp_hp, conditions_json, buffs_json)
+      VALUES (2, 18, 0, '[]', '[]')
+    `).run();
+
+    const concentration = castConcentrationSpellEvent(db, 1, 'Bless');
+    const linkedBuff = {
+      name: 'Bless',
+      sourceCharacterId: 1,
+      concentrationId: concentration.concentrationId,
+      isConcentration: true,
+    };
+    applyBuffEvent(db, 1, linkedBuff);
+    applyBuffEvent(db, 2, linkedBuff);
+    db.prepare(`
+      INSERT INTO initiative_tracker (entity_name, entity_type, buffs_json)
+      VALUES ('Blessed Goblin', 'monster', ?)
+    `).run(JSON.stringify([{ id: 'monster-bless', ...linkedBuff }]));
+    db.prepare("UPDATE session_states SET slots_used_json = '{\"1\":1}' WHERE character_id = 1").run();
+
+    const before = {
+      caster: getSessionState(db, 1),
+      ally: getSessionState(db, 2),
+      monsterBuffs: db.prepare('SELECT buffs_json FROM initiative_tracker WHERE entity_name = ?').get('Blessed Goblin').buffs_json,
+    };
+
+    const result = castConcentrationSpellEvent(db, 1, 'Hold Person', 1);
+
+    expect(result.success).toBe(false);
+    expect({
+      caster: getSessionState(db, 1),
+      ally: getSessionState(db, 2),
+      monsterBuffs: db.prepare('SELECT buffs_json FROM initiative_tracker WHERE entity_name = ?').get('Blessed Goblin').buffs_json,
+    }).toEqual(before);
+  });
+
   it('should dissolve concentration buffs and apply unconscious when dropping to 0 HP', () => {
     // 1. Give the character some active buffs and make them concentrate
     const buff = {

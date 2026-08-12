@@ -1304,7 +1304,7 @@ io.on('connection', (socket) => {
 
         // If concentration, set it (drops existing concentration)
         if (isConcentration) {
-            const concResult = castConcentrationSpellEvent(db, characterId, spellName, effectiveLevel > 0 ? effectiveLevel : null);
+            const concResult = castConcentrationSpellEvent(db, characterId, spellName);
             if (!concResult.success) {
                 socket.emit('rules_error', { message: concResult.error });
                 // Slot already spent — this is correct 5e behavior (slot consumed even if concentration fails)
