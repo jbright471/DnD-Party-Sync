@@ -22,6 +22,10 @@ const http = require('http');
 const express = require('express');
 const { Server: SocketServer } = require('socket.io');
 const { io: SocketClient } = require('socket.io-client');
+const {
+  createPermissionTargetAuthorizer,
+  createSocketAuthorizationMiddleware,
+} = require('../../lib/socketAuthorization');
 
 const {
   applyDamageEvent,
@@ -49,7 +53,7 @@ const {
  *   connect: () => import('socket.io-client').Socket
  * }>}
  */
-function createTestServer(db) {
+function createTestServer(db, { principals = {} } = {}) {
   return new Promise((resolve, reject) => {
     const app = express();
     const httpServer = http.createServer(app);
@@ -73,10 +77,32 @@ function createTestServer(db) {
       io.emit('timeline_update', getCombatTimeline(db));
     }
 
+    const serverPrincipals = new Map([
+      ['dm', { dmAuthenticated: true }],
+      ...Object.entries(principals),
+    ]);
+
+    io.use((socket, next) => {
+      const principal = serverPrincipals.get(socket.handshake.auth?.testSession);
+      socket.dmAuthenticated = principal?.dmAuthenticated === true;
+      socket.accessGrant = principal?.accessGrant || null;
+      next();
+    });
+
     io.on('connection', (socket) => {
+      socket.use(createSocketAuthorizationMiddleware(socket, {
+        resolveCharacterIdentity(characterId) {
+          return db.prepare('SELECT id, name FROM characters WHERE id = ?').get(characterId) || null;
+        },
+        authorizePlayerTarget: createPermissionTargetAuthorizer(db),
+      }));
+
+      socket.on('register_player', ({ playerName }, callback) => {
+        callback?.({ success: true, playerName });
+      });
 
       // ── HP events ─────────────────────────────────────────────────────────
-      socket.on('update_hp', ({ characterId, delta, damageType }) => {
+      socket.on('update_hp', ({ characterId, delta, damageType, actor }) => {
         const result = delta < 0
           ? applyDamageEvent(db, characterId, Math.abs(delta), damageType || 'untyped')
           : applyHealEvent(db, characterId, delta);
@@ -85,7 +111,7 @@ function createTestServer(db) {
           broadcastPartyState();
           broadcastTimeline();
         }
-        socket.emit('update_hp_result', result);
+        socket.emit('update_hp_result', { ...result, authorizedActor: actor });
       });
 
       // ── Conditions ────────────────────────────────────────────────────────
@@ -138,10 +164,11 @@ function createTestServer(db) {
        * Creates a new connected Socket.io client for this server.
        * The caller is responsible for disconnecting it when done.
        */
-      function connect() {
+      function connect(testSession = 'dm') {
         return SocketClient(`http://127.0.0.1:${port}`, {
           transports: ['polling'],
           forceNew: true,
+          auth: testSession ? { testSession } : {},
         });
       }
 

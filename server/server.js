@@ -48,8 +48,11 @@ const {
     projectPartyState,
     projectInitiativeState,
     projectTimeline,
-    canSocketReceiveEvent,
 } = require('./lib/clientStateProjection');
+const {
+    createPermissionTargetAuthorizer,
+    createSocketAuthorizationMiddleware,
+} = require('./lib/socketAuthorization');
 const {
     normalizeRollVisibility,
     isPublicRoll,
@@ -881,13 +884,12 @@ io.on('connection', (socket) => {
         socket.castEncounterId = socket.accessGrant.encounterId;
     }
 
-    socket.use(([event], next) => {
-        if (!canSocketReceiveEvent(socket, event)) {
-            socket.emit('cast_read_only_error', { message: 'The encounter cast view is read-only.' });
-            return next(new Error('Encounter cast view is read-only'));
-        }
-        next();
-    });
+    socket.use(createSocketAuthorizationMiddleware(socket, {
+        resolveCharacterIdentity(characterId) {
+            return db.prepare('SELECT id, name FROM characters WHERE id = ?').get(characterId) || null;
+        },
+        authorizePlayerTarget: createPermissionTargetAuthorizer(db),
+    }));
 
     // DM room join — validates stored token before admitting to dm_room
     socket.on('dm_join_room', ({ dmToken }) => {
