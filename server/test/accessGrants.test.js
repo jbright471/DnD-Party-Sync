@@ -11,13 +11,15 @@ import {
 } from '../lib/accessGrants.js';
 import { createAccessGrantRouter } from '../routes/accessGrants.js';
 
-function startHttpServer(db, service) {
+function startHttpServer(db, service, auditEvents = [], onAudit = event => auditEvents.push(event)) {
   const app = express();
   app.use(express.json());
   app.use('/api/access-grants', createAccessGrantRouter({
     db,
     service,
     requireDm: token => token === 'valid-dm-token',
+    onAudit,
+    transaction: operation => db.transaction(operation)(),
   }));
 
   const server = http.createServer(app);
@@ -217,5 +219,58 @@ describe('DM-only access grant administration', () => {
     expect(rotatedGrant).toMatchObject({ role: 'cast', encounterId });
     expect(revokeResponse.status).toBe(200);
     expect(service.authenticate(rotated.token)).toBeNull();
+  });
+
+  it('reports grant lifecycle audit events without raw bearer credentials', async () => {
+    const auditEvents = [];
+    await httpServer.close();
+    httpServer = await startHttpServer(db, service, auditEvents);
+    const characterId = insertCharacter(db);
+    const secret = 'RAW_DM_BEARER_SENTINEL';
+    const headers = {
+      authorization: `Bearer valid-dm-token`,
+      'content-type': 'application/json',
+      'x-audit-sentinel': secret,
+    };
+
+    const createdResponse = await fetch(`${httpServer.baseUrl}/player`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ characterId, secret }),
+    });
+    const created = await createdResponse.json();
+    const rotatedResponse = await fetch(`${httpServer.baseUrl}/${created.grant.id}/rotate`, {
+      method: 'POST',
+      headers,
+    });
+    const rotated = await rotatedResponse.json();
+    await fetch(`${httpServer.baseUrl}/${rotated.grant.id}`, { method: 'DELETE', headers });
+
+    expect(auditEvents.map(event => event.eventType)).toEqual([
+      'access_grant_created',
+      'access_grant_rotated',
+      'access_grant_revoked',
+    ]);
+    expect(JSON.stringify(auditEvents)).not.toMatch(/RAW_DM_BEARER_SENTINEL|valid-dm-token/);
+  });
+
+  it('rolls back grant creation when its required audit record cannot be stored', async () => {
+    await httpServer.close();
+    httpServer = await startHttpServer(db, service, [], () => {
+      throw new Error('synthetic audit failure');
+    });
+    const characterId = insertCharacter(db);
+
+    const response = await fetch(`${httpServer.baseUrl}/player`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer valid-dm-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ characterId }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM access_grants').get().count).toBe(0);
   });
 });

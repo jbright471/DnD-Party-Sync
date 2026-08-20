@@ -203,6 +203,31 @@ describe('Socket.io inbound authorization', () => {
     expect(error).toEqual({ code: 'SOCKET_EVENT_FORBIDDEN', message: 'Not authorized for this event.' });
     expect(JSON.stringify(error)).not.toMatch(/secret|token|boss|future_unclassified/i);
   });
+
+  it('audits a denial using server-derived metadata without retaining the packet payload', () => {
+    const auditEvents = [];
+    const socket = {
+      accessGrant: { id: 17, role: 'player', characterId: ariaId },
+    };
+    const next = vi.fn();
+    const authorize = createSocketAuthorizationMiddleware(socket, {
+      emitToSocket: vi.fn(),
+      onDenied: event => auditEvents.push(event),
+    });
+
+    authorize(['future_unclassified_mutation', {
+      accessToken: 'RAW_ACCESS_TOKEN_SENTINEL',
+      pin: 'RAW_PIN_SENTINEL',
+    }], next);
+
+    expect(auditEvents).toEqual([{
+      actorRole: 'player',
+      grantId: 17,
+      eventName: 'future_unclassified_mutation',
+      reasonCode: 'event_not_allowed',
+    }]);
+    expect(JSON.stringify(auditEvents)).not.toMatch(/RAW_ACCESS_TOKEN_SENTINEL|RAW_PIN_SENTINEL/);
+  });
 });
 
 describe('production Socket.io event policy coverage', () => {

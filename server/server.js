@@ -4,6 +4,13 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const { createHash, randomUUID, timingSafeEqual } = require('crypto');
+const { createOriginPolicy, loadRuntimeSecurityConfig } = require('./lib/runtimeSecurity');
+const { createFixedWindowRateLimiter } = require('./lib/rateLimiter');
+const { createSecurityAuditWriter } = require('./lib/securityAudit');
+
+const securityConfig = loadRuntimeSecurityConfig(process.env);
+const originPolicy = createOriginPolicy(securityConfig.allowedOrigins);
 
 const { runMigrations } = require('./schema');
 const { router: characterRouter, getAllCharacters } = require('./routes/characters');
@@ -53,6 +60,7 @@ const {
 const {
     createPermissionTargetAuthorizer,
     createSocketAuthorizationMiddleware,
+    getSocketRole,
 } = require('./lib/socketAuthorization');
 const { createOutboundSocketDelivery } = require('./lib/outboundSocketPolicy');
 const {
@@ -146,13 +154,75 @@ function applyEffect(effect) {
 // --- Bootstrap ---
 runMigrations();
 const accessGrantService = createAccessGrantService(db);
+const writeSecurityAudit = createSecurityAuditWriter(db, {
+    maxRows: securityConfig.securityAuditMaxRows,
+});
+
+function recordSecurityAudit(event) {
+    try {
+        writeSecurityAudit(event);
+        return true;
+    } catch (error) {
+        console.error('[SecurityAudit] Failed to persist security event:', error.message);
+        return false;
+    }
+}
+const dmAuthLimiter = createFixedWindowRateLimiter({
+    ...securityConfig.dmAuth,
+    maxEntries: securityConfig.rateLimitMaxEntries,
+});
+const socketConnectionLimiter = createFixedWindowRateLimiter({
+    ...securityConfig.socketConnections,
+    maxEntries: securityConfig.rateLimitMaxEntries,
+});
+
+function requestSourceAddress(request) {
+    return request?.socket?.remoteAddress || request?.connection?.remoteAddress || 'unknown';
+}
+
+function secretsMatch(candidate, expected) {
+    const candidateDigest = createHash('sha256').update(String(candidate ?? ''), 'utf8').digest();
+    const expectedDigest = createHash('sha256').update(expected, 'utf8').digest();
+    return timingSafeEqual(candidateDigest, expectedDigest);
+}
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
+    maxHttpBufferSize: securityConfig.socketMaxMessageBytes,
     cors: {
-        origin: '*',
+        origin(origin, callback) {
+            callback(null, originPolicy.isAllowed(origin));
+        },
         methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    },
+    allowRequest(request, callback) {
+        const sourceAddress = requestSourceAddress(request);
+        const origin = request.headers.origin;
+        if (!originPolicy.isAllowed(origin)) {
+            recordSecurityAudit({
+                eventType: 'socket_origin_denied',
+                actorRole: 'unauthenticated',
+                outcome: 'denied',
+                sourceAddress,
+                reasonCode: 'origin_not_allowed',
+            });
+            callback('Origin not allowed', false);
+            return;
+        }
+        const attempt = socketConnectionLimiter.consume(sourceAddress);
+        if (!attempt.allowed) {
+            recordSecurityAudit({
+                eventType: 'socket_connection_rate_limited',
+                actorRole: 'unauthenticated',
+                outcome: 'denied',
+                sourceAddress,
+                reasonCode: 'connection_rate_limit',
+            });
+            callback('Too many connection attempts', false);
+            return;
+        }
+        callback(null, true);
     },
 });
 app.set('io', io);
@@ -172,8 +242,30 @@ const egress = createOutboundSocketDelivery(io, {
 app.set('socketDelivery', egress);
 
 // --- Middleware ---
-app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+    if (originPolicy.isAllowed(req.headers.origin)) return next();
+    recordSecurityAudit({
+        eventType: 'http_origin_denied',
+        actorRole: 'unauthenticated',
+        outcome: 'denied',
+        sourceAddress: requestSourceAddress(req),
+        reasonCode: 'origin_not_allowed',
+    });
+    return res.status(403).json({ error: 'Origin not allowed' });
+});
+app.use(cors({
+    origin(origin, callback) {
+        callback(null, originPolicy.isAllowed(origin));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+}));
+app.use(express.json({ limit: securityConfig.httpJsonLimit }));
+app.use((error, _req, res, next) => {
+    if (error?.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'Request body too large' });
+    }
+    return next(error);
+});
 
 // --- REST Routes ---
 app.use('/api/characters', characterRouter);
@@ -268,15 +360,43 @@ app.post('/api/combat/snapshots/:id/restore', (req, res) => {
 });
 
 // DM Auth — validates PIN and returns a session token stored in campaign_state
-const { randomUUID } = require('crypto');
 app.post('/api/auth/dm', (req, res) => {
     const { pin } = req.body;
-    const masterPin = process.env.DM_PIN || '1234';
-    if (pin === masterPin) {
+    const sourceAddress = requestSourceAddress(req);
+    const attempt = dmAuthLimiter.consume(sourceAddress);
+    if (!attempt.allowed) {
+        recordSecurityAudit({
+            eventType: 'dm_auth_rate_limited',
+            actorRole: 'unauthenticated',
+            outcome: 'denied',
+            sourceAddress,
+            reasonCode: 'attempt_limit',
+        });
+        res.setHeader('Retry-After', Math.max(1, Math.ceil(attempt.retryAfterMs / 1000)));
+        return res.status(429).json({ success: false, error: 'Too many authentication attempts' });
+    }
+    if (secretsMatch(pin, securityConfig.dmPin)) {
         const token = randomUUID();
-        db.prepare("INSERT OR REPLACE INTO campaign_state (key, value) VALUES ('dm_token', ?)").run(token);
+        db.transaction(() => {
+            db.prepare("INSERT OR REPLACE INTO campaign_state (key, value) VALUES ('dm_token', ?)").run(token);
+            writeSecurityAudit({
+                eventType: 'dm_auth_succeeded',
+                actorRole: 'dm',
+                outcome: 'allowed',
+                sourceAddress,
+                reasonCode: 'pin_verified',
+            });
+        })();
+        dmAuthLimiter.reset(sourceAddress);
         res.json({ success: true, token });
     } else {
+        recordSecurityAudit({
+            eventType: 'dm_auth_denied',
+            actorRole: 'unauthenticated',
+            outcome: 'denied',
+            sourceAddress,
+            reasonCode: 'invalid_pin',
+        });
         res.status(401).json({ success: false, error: 'Invalid PIN' });
     }
 });
@@ -666,6 +786,10 @@ app.use('/api/access-grants', createAccessGrantRouter({
     service: accessGrantService,
     requireDm,
     onGrantInvalidated: disconnectGrantSockets,
+    transaction: operation => db.transaction(operation)(),
+    onAudit(event, req) {
+        writeSecurityAudit({ ...event, sourceAddress: requestSourceAddress(req) });
+    },
 }));
 
 function forEachConnectedSocket(callback) {
@@ -873,6 +997,13 @@ io.use((socket, next) => {
     if (!accessFlow && !presentedToken) return next();
     if (!grant || (accessFlow === 'companion' && grant.role !== 'player')
         || (accessFlow === 'cast' && grant.role !== 'cast')) {
+        recordSecurityAudit({
+            eventType: 'socket_authorization_denied',
+            actorRole: 'unauthenticated',
+            outcome: 'denied',
+            sourceAddress: socket.handshake.address,
+            reasonCode: 'invalid_access_grant',
+        });
         return next(new Error('This access link is invalid or has been revoked. Ask your DM for a new link.'));
     }
     next();
@@ -891,6 +1022,27 @@ io.on('connection', (socket) => {
         socket.castEncounterId = socket.accessGrant.encounterId;
     }
 
+    const socketEventLimiter = createFixedWindowRateLimiter({
+        ...securityConfig.socketEvents,
+        maxEntries: 1,
+    });
+    socket.use((_packet, next) => {
+        const attempt = socketEventLimiter.consume('events');
+        if (attempt.allowed) return next();
+        recordSecurityAudit({
+            eventType: 'socket_event_rate_limited',
+            actorRole: getSocketRole(socket),
+            subjectId: socket.accessGrant?.id ? `grant:${socket.accessGrant.id}` : null,
+            outcome: 'denied',
+            sourceAddress: socket.handshake.address,
+            reasonCode: 'message_rate_limit',
+        });
+        egress.send(socket, 'authorization_error', {
+            code: 'SOCKET_RATE_LIMITED',
+            message: 'Too many realtime messages.',
+        });
+        return next(new Error('Too many realtime messages.'));
+    });
     socket.use(createSocketAuthorizationMiddleware(socket, {
         resolveCharacterIdentity(characterId) {
             return db.prepare('SELECT id, name FROM characters WHERE id = ?').get(characterId) || null;
@@ -898,6 +1050,16 @@ io.on('connection', (socket) => {
         authorizePlayerTarget: createPermissionTargetAuthorizer(db),
         emitToSocket(event, payload) {
             egress.send(socket, event, payload);
+        },
+        onDenied(event) {
+            writeSecurityAudit({
+                eventType: 'socket_authorization_denied',
+                actorRole: event.actorRole,
+                subjectId: event.grantId ? `grant:${event.grantId}` : null,
+                outcome: 'denied',
+                sourceAddress: socket.handshake.address,
+                reasonCode: event.reasonCode,
+            });
         },
     }));
 
@@ -2841,11 +3003,15 @@ io.on('connection', (socket) => {
     });
 });
 
-cron.schedule('0 3 * * *', async () => {
-    try { await backupDatabase(); } catch (err) { console.error('[Cron] Backup failed:', err.message); }
-});
+if (securityConfig.scheduledJobsEnabled) {
+    cron.schedule('0 3 * * *', async () => {
+        try { await backupDatabase(); } catch (err) { console.error('[Cron] Backup failed:', err.message); }
+    });
+}
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-    console.log(`[Server] Arcane Ally backend running on http://localhost:${PORT}`);
+    const address = server.address();
+    const boundPort = typeof address === 'object' && address ? address.port : PORT;
+    console.log(`[Server] Arcane Ally backend running on http://localhost:${boundPort}`);
 });

@@ -64,7 +64,7 @@ export function DmPrepPanel({ isOpen, onClose, contextFilter }: DmPrepPanelProps
 
   const dmHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
-    ...(dmToken ? { 'x-dm-token': dmToken } : { 'x-dm-pin': process.env.DM_PIN || '1234' }),
+    ...(dmToken ? { 'x-dm-token': dmToken } : {}),
   }), [dmToken]);
 
   const loadNotes = useCallback(async () => {

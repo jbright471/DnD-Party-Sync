@@ -187,10 +187,14 @@ Core campaign state, the database, and configured AI processing run on your hard
 1. **Environment Config**
    ```env
    PORT=3001
-   DM_PIN=1234
+   NODE_ENV=development
+   DM_PIN=
+   ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3001
    OLLAMA_URL=http://your-ollama-host:11434
    # Optional: DB_PATH=/absolute/path/to/dnd.db
    ```
+
+   Production startup is fail-closed. Set `NODE_ENV=production`, provide a unique `DM_PIN` of at least 12 characters, and set `ALLOWED_ORIGINS` to the exact comma-separated browser origins that serve Arcane Ally. Wildcards and path-bearing URLs are rejected.
 
 2. **Local Development**
 
@@ -212,6 +216,8 @@ Core campaign state, the database, and configured AI processing run on your hard
    - The backend default port is `3001` (`PORT` in `.env`).
    - The Vite dev server default port is `5173`.
    - Production Portainer/Compose deployments should map `/api` and `/socket.io` traffic to the backend service on port `3001`.
+   - Terminate HTTPS at a trusted reverse proxy, or keep all access on a private encrypted overlay such as Tailscale. The backend does not provision certificates.
+   - Preserve the client source address at the reverse-proxy rate-limit layer. Arcane Ally deliberately ignores caller-supplied forwarding headers; without a trusted proxy-side limiter, backend connection limits see the proxy as one source.
    - If the entire `server/` directory is bind-mounted into an Alpine-based container, mount `/app/server/node_modules` as a separate container volume. Native `better-sqlite3` binaries cannot be shared safely between host Linux and Alpine runtimes.
    - Avoid running `npm install` on every container start. Build dependencies into the image and use `npm start` in the runtime container.
 
@@ -227,7 +233,12 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 - Keep real `.env` files private; commit only `.env.example` templates.
 - Do not commit SQLite databases, PDFs, private keys, certificates, or character export files.
 - The repo ignore rules exclude `.env`, `*.db`, `*.sqlite`, PDFs, common private key formats, `node_modules`, and build output.
-- Change `DM_PIN` from the sample value before exposing the app outside a trusted LAN.
+- Production refuses to start with a missing, common, sample, or shorter-than-12-character `DM_PIN`. Keep the value in runtime secret injection, not a checked-in file. After rotating it, restart the backend and log in once to replace the stored DM session token; revoke or rotate player/cast grants separately if they may have been exposed.
+- Set `ALLOWED_ORIGINS` to exact origins such as `https://ally.example.test`; never use `*`. Requests without an `Origin` remain available for native/non-browser clients.
+- Default limits are `256kb` JSON bodies, `65536`-byte Socket.io messages, five DM login attempts per 15 minutes, 30 Socket.io connection attempts per minute per direct peer, and 120 inbound events per 10 seconds per connection. Override the corresponding variables in `.env.example` only after measuring normal use.
+- DM PINs are accepted only by `/api/auth/dm`; administrative routes use the resulting revocable `X-DM-Token`/Bearer session rather than accepting the raw PIN.
+- Security events for DM authentication, grant lifecycle, realtime authorization denials, origin denials, and throttling are stored in `security_audit_events`. Records use allowlisted metadata, never store PINs, bearer tokens, authorization headers, or packet bodies, and retain the newest 10,000 rows by default (`SECURITY_AUDIT_MAX_ROWS`).
+- Do not publish the backend port directly to the internet. R1-D hardens authentication and realtime transport, but the remaining REST route groups still require a separate deny-by-default authorization review before broader-network exposure.
 - Prefer local Ollama for AI features when campaign privacy matters.
 
 ## Project Structure

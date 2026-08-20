@@ -581,9 +581,6 @@ function isDmRequest(req) {
         const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
         if (row && row.value && row.value === token) return true;
     }
-    const pin = req.headers['x-dm-pin'];
-    const masterPin = process.env.DM_PIN || '1234';
-    if (pin && pin === masterPin) return true;
     return false;
 }
 

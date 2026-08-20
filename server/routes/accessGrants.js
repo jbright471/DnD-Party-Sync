@@ -25,7 +25,13 @@ function serializeIssued(issued) {
   };
 }
 
-function createAccessGrantRouter({ service, requireDm, onGrantInvalidated = () => {} }) {
+function createAccessGrantRouter({
+  service,
+  requireDm,
+  onGrantInvalidated = () => {},
+  onAudit = () => {},
+  transaction = operation => operation(),
+}) {
   const router = express.Router();
 
   router.use((req, res, next) => {
@@ -41,10 +47,20 @@ function createAccessGrantRouter({ service, requireDm, onGrantInvalidated = () =
 
   router.post('/player', (req, res, next) => {
     try {
-      const issued = service.createGrant({
-        role: 'player',
-        characterId: req.body.characterId,
-        encounterId: req.body.encounterId,
+      const issued = transaction(() => {
+        const created = service.createGrant({
+          role: 'player',
+          characterId: req.body.characterId,
+          encounterId: req.body.encounterId,
+        });
+        onAudit({
+          eventType: 'access_grant_created',
+          actorRole: 'dm',
+          subjectId: `grant:${created.grant.id}`,
+          outcome: 'allowed',
+          reasonCode: created.grant.role,
+        }, req);
+        return created;
       });
       res.status(201).json(serializeIssued(issued));
     } catch (error) {
@@ -54,7 +70,17 @@ function createAccessGrantRouter({ service, requireDm, onGrantInvalidated = () =
 
   router.post('/cast', (req, res, next) => {
     try {
-      const issued = service.createGrant({ role: 'cast', encounterId: req.body.encounterId });
+      const issued = transaction(() => {
+        const created = service.createGrant({ role: 'cast', encounterId: req.body.encounterId });
+        onAudit({
+          eventType: 'access_grant_created',
+          actorRole: 'dm',
+          subjectId: `grant:${created.grant.id}`,
+          outcome: 'allowed',
+          reasonCode: created.grant.role,
+        }, req);
+        return created;
+      });
       res.status(201).json(serializeIssued(issued));
     } catch (error) {
       next(error);
@@ -63,7 +89,17 @@ function createAccessGrantRouter({ service, requireDm, onGrantInvalidated = () =
 
   router.post('/:id/rotate', (req, res, next) => {
     try {
-      const issued = service.rotateGrant(req.params.id);
+      const issued = transaction(() => {
+        const rotated = service.rotateGrant(req.params.id);
+        onAudit({
+          eventType: 'access_grant_rotated',
+          actorRole: 'dm',
+          subjectId: `grant:${rotated.grant.id}`,
+          outcome: 'allowed',
+          reasonCode: rotated.grant.role,
+        }, req);
+        return rotated;
+      });
       onGrantInvalidated(Number(req.params.id));
       res.status(201).json(serializeIssued(issued));
     } catch (error) {
@@ -73,7 +109,17 @@ function createAccessGrantRouter({ service, requireDm, onGrantInvalidated = () =
 
   router.delete('/:id', (req, res, next) => {
     try {
-      const grant = service.revokeGrant(req.params.id);
+      const grant = transaction(() => {
+        const revoked = service.revokeGrant(req.params.id);
+        onAudit({
+          eventType: 'access_grant_revoked',
+          actorRole: 'dm',
+          subjectId: `grant:${revoked.id}`,
+          outcome: 'allowed',
+          reasonCode: revoked.role,
+        }, req);
+        return revoked;
+      });
       onGrantInvalidated(grant.id);
       res.json({ grant });
     } catch (error) {

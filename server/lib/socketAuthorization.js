@@ -279,7 +279,21 @@ function createSocketAuthorizationMiddleware(socket, {
   resolveCharacterIdentity = () => null,
   authorizePlayerTarget = () => false,
   emitToSocket = () => false,
+  onDenied = () => {},
 } = {}) {
+  function reportDenial(eventName, role, reasonCode) {
+    try {
+      onDenied({
+        actorRole: role,
+        grantId: socket.accessGrant?.id ?? null,
+        eventName,
+        reasonCode,
+      });
+    } catch (error) {
+      console.error('[SecurityAudit] Failed to record Socket.io denial:', error.message);
+    }
+  }
+
   return function authorizeSocketPacket(packet, next) {
     const [event] = packet;
     const classification = EVENT_CLASSIFICATIONS[event];
@@ -287,6 +301,7 @@ function createSocketAuthorizationMiddleware(socket, {
 
     if (!canInvoke(classification, event, role)) {
       emitToSocket('authorization_error', { ...DENIED_ERROR });
+      reportDenial(event, role, 'event_not_allowed');
       return next(new Error(DENIED_ERROR.message));
     }
 
@@ -305,6 +320,7 @@ function createSocketAuthorizationMiddleware(socket, {
             authorizePlayerTarget,
           )) {
         emitToSocket('authorization_error', { ...SCOPE_ERROR });
+        reportDenial(event, role, 'character_scope_mismatch');
         return next(new Error(SCOPE_ERROR.message));
       }
     }

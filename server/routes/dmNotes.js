@@ -2,18 +2,13 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// DM auth middleware — validates X-DM-Pin or X-DM-Token header
+// DM auth middleware — accepts only the revocable DM session token.
 function dmOnly(req, res, next) {
-    // Token-based auth (preferred after first login)
     const token = req.headers['x-dm-token'];
     if (token) {
         const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
         if (row && row.value && row.value === token) return next();
     }
-    // PIN fallback
-    const pin = req.headers['x-dm-pin'];
-    const masterPin = process.env.DM_PIN || '1234';
-    if (pin && pin === masterPin) return next();
 
     res.status(403).json({ error: 'DM access required' });
 }

@@ -17,6 +17,7 @@ RUN npm install --build-from-source --omit=dev
 # Stage 3: Production lightweight runner
 FROM node:20-alpine
 WORKDIR /app
+ENV NODE_ENV=production
 
 # Install runtime dependencies only (libc6-compat, gcompat, and poppler-utils for pdf processing if needed)
 RUN apk add --no-cache libc6-compat gcompat poppler-utils
