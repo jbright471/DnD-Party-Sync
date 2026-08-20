@@ -230,7 +230,17 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const storedToken = localStorage.getItem('dm_token');
     if (storedToken) {
       fetch('/api/effect-timeline')
-        .then(r => r.json())
+        .then(async r => {
+          if (!r.ok) {
+            if (r.status === 401 || r.status === 403) {
+              clearDmAuth();
+            }
+            return [];
+          }
+
+          const data = await r.json();
+          return Array.isArray(data) ? data : [];
+        })
         .then(setEffectEvents)
         .catch(() => {});
       socket.emit('dm_join_room', { dmToken: storedToken });
@@ -252,7 +262,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       socket.off('pending_import_created');
       socket.off('connect');
     };
-  }, []);
+  }, [clearDmAuth]);
 
   const state: GameState = {
     characters: party,
