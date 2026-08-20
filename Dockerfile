@@ -19,8 +19,9 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Install runtime dependencies only (libc6-compat, gcompat, and poppler-utils for pdf processing if needed)
-RUN apk add --no-cache libc6-compat gcompat poppler-utils
+# Refresh the runtime layer and install only the libraries needed by the app.
+RUN apk upgrade --no-cache \
+  && apk add --no-cache libc6-compat gcompat poppler-utils
 
 # Copy node_modules from backend-builder
 COPY --chown=node:node --from=backend-builder /app/server/node_modules /app/server/node_modules
@@ -33,8 +34,12 @@ COPY --chown=node:node --from=frontend-builder /app/client/dist /app/client/dist
 
 WORKDIR /app/server
 
-# Ensure writable dirs exist and are owned by node
-RUN mkdir -p /app/server /app/client && chown -R node:node /app
+# Ensure writable dirs exist and are owned by node. npm and Corepack are build
+# tooling, so remove them from the runtime image and start Node directly.
+RUN mkdir -p /app/server /app/client \
+  && chown -R node:node /app \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/pnpm
 
 # Switch to non-root user
 USER node
@@ -44,4 +49,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD node /app/server/scripts/healthcheck.js
 
 EXPOSE 3001
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

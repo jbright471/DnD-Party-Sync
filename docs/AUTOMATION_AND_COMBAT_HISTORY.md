@@ -90,4 +90,4 @@ Without `sessionId`, the endpoint selects the active combat session. If no encou
 
 Native Node modules must match the runtime that loads them. When bind-mounting the entire `server/` directory into an Alpine container, isolate `/app/server/node_modules` with a container volume. Do not share host-built `better-sqlite3` binaries with Alpine.
 
-Production containers should install dependencies while building the image and run `npm start` without reinstalling packages on every restart.
+Production containers install dependencies while building the image and run `node server.js` directly without shipping npm or reinstalling packages on every restart.
