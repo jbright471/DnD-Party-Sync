@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { DmAccessGate } from "./components/DmAccessGate";
 import { GameProvider, useGame } from "./context/GameContext";
 import { Layout } from "./components/Layout";
 import { toast } from "sonner";
@@ -195,7 +196,7 @@ function MainAppShell() {
             <Route path="/party" element={<PartyLobby />} />
             <Route path="/equipment" element={<EquipmentManager />} />
             <Route path="/compendium" element={<Compendium />} />
-            <Route path="/dm" element={<DmDashboard />} />
+            <Route path="/dm" element={<DmAccessGate><DmDashboard /></DmAccessGate>} />
             <Route path="/notes" element={<PartyNotesPage />} />
             <Route path="/archive" element={<SessionArchive />} />
             <Route path="/worldmap" element={<WorldMap />} />

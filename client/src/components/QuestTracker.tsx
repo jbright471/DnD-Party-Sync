@@ -38,9 +38,15 @@ export function QuestTracker({ isDm = false }: QuestTrackerProps) {
   const fetchQuests = async () => {
     try {
       const res = await fetch('/api/quests');
+      if (!res.ok) {
+        setQuests([]);
+        return;
+      }
       const data = await res.json();
-      setQuests(data);
-    } catch (e) {}
+      setQuests(Array.isArray(data) ? data : []);
+    } catch {
+      setQuests([]);
+    }
   };
 
   const handleCreate = async (e: React.FormEvent) => {
