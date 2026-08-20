@@ -37,7 +37,7 @@ export function QuestTracker({ isDm = false }: QuestTrackerProps) {
 
   const fetchQuests = async () => {
     try {
-      const res = await fetch(`/api/quests?isDm=${isDm}`);
+      const res = await fetch('/api/quests');
       const data = await res.json();
       setQuests(data);
     } catch (e) {}

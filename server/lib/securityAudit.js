@@ -1,5 +1,7 @@
 'use strict';
 
+const { ROUTE_CLASS_IDS } = require('./restAuthorization');
+
 const SECURITY_EVENT_TYPES = new Set([
   'access_grant_created',
   'access_grant_revoked',
@@ -8,6 +10,7 @@ const SECURITY_EVENT_TYPES = new Set([
   'dm_auth_rate_limited',
   'dm_auth_succeeded',
   'http_origin_denied',
+  'rest_authorization_denied',
   'socket_authorization_denied',
   'socket_connection_rate_limited',
   'socket_event_rate_limited',
@@ -25,6 +28,7 @@ function migrateSecurityAudit(db) {
       actor_role     TEXT NOT NULL,
       subject_id     TEXT,
       outcome        TEXT NOT NULL,
+      route_class    TEXT,
       source_address TEXT,
       reason_code    TEXT,
       created_at     TEXT NOT NULL DEFAULT (datetime('now'))
@@ -32,6 +36,10 @@ function migrateSecurityAudit(db) {
     CREATE INDEX IF NOT EXISTS idx_security_audit_created
       ON security_audit_events (created_at DESC, id DESC);
   `);
+  const columns = new Set(db.prepare('PRAGMA table_info(security_audit_events)').all().map(column => column.name));
+  if (!columns.has('route_class')) {
+    db.exec('ALTER TABLE security_audit_events ADD COLUMN route_class TEXT');
+  }
 }
 
 function safeOptionalText(value, maximumLength, pattern = /^[a-zA-Z0-9:._-]+$/) {
@@ -47,8 +55,8 @@ function createSecurityAuditWriter(db, { maxRows = 10_000 } = {}) {
   migrateSecurityAudit(db);
   const insert = db.prepare(`
     INSERT INTO security_audit_events
-      (event_type, actor_role, subject_id, outcome, source_address, reason_code)
-    VALUES (?, ?, ?, ?, ?, ?)
+      (event_type, actor_role, subject_id, outcome, route_class, source_address, reason_code)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const prune = db.prepare(`
     DELETE FROM security_audit_events
@@ -67,18 +75,23 @@ function createSecurityAuditWriter(db, { maxRows = 10_000 } = {}) {
     actorRole = 'system',
     subjectId = null,
     outcome,
+    routeClass = null,
     sourceAddress = null,
     reasonCode = null,
   }) {
     if (!SECURITY_EVENT_TYPES.has(eventType)) throw new Error('Unknown security audit event type.');
     if (!ACTOR_ROLES.has(actorRole)) throw new Error('Unknown security audit actor role.');
     if (!OUTCOMES.has(outcome)) throw new Error('Unknown security audit outcome.');
+    if (eventType === 'rest_authorization_denied' && !ROUTE_CLASS_IDS.has(routeClass)) {
+      throw new Error('Unknown REST authorization route class.');
+    }
 
     persist([
       eventType,
       actorRole,
       safeOptionalText(subjectId, 128),
       outcome,
+      safeOptionalText(routeClass, 64),
       safeOptionalText(sourceAddress, 64, /^[a-fA-F0-9:.[\]-]+$/),
       safeOptionalText(reasonCode, 64),
     ]);

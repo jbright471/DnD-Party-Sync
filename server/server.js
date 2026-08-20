@@ -8,6 +8,7 @@ const { createHash, randomUUID, timingSafeEqual } = require('crypto');
 const { createOriginPolicy, loadRuntimeSecurityConfig } = require('./lib/runtimeSecurity');
 const { createFixedWindowRateLimiter } = require('./lib/rateLimiter');
 const { createSecurityAuditWriter } = require('./lib/securityAudit');
+const { createRestAuthorizationMiddleware } = require('./lib/restAuthorization');
 
 const securityConfig = loadRuntimeSecurityConfig(process.env);
 const originPolicy = createOriginPolicy(securityConfig.allowedOrigins);
@@ -259,6 +260,16 @@ app.use(cors({
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
 }));
+app.use(createRestAuthorizationMiddleware({
+    authenticateDm: token => requireDm(token),
+    authenticateAccessGrant: token => accessGrantService.authenticate(token),
+    onDenial(event, req) {
+        recordSecurityAudit({
+            ...event,
+            sourceAddress: requestSourceAddress(req),
+        });
+    },
+}));
 app.use(express.json({ limit: securityConfig.httpJsonLimit }));
 app.use((error, _req, res, next) => {
     if (error?.type === 'entity.too.large') {
@@ -417,12 +428,6 @@ app.get('/api/health', (req, res) => {
 
 app.post('/api/v1/effects/bulk-apply', async (req, res) => {
     try {
-        const authHeader = req.headers.authorization || '';
-        const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
-        if (!requireDm(token)) {
-            return res.status(401).json({ error: 'Unauthorized: Invalid DM Token' });
-        }
-
         const { requestId, targets, effects, actor } = req.body;
         if (!Array.isArray(targets) || targets.length === 0) {
             return res.status(400).json({ error: 'No targets specified' });
@@ -630,10 +635,7 @@ app.get('/api/effect-timeline', (req, res) => {
             targetId: Number.isNaN(targetId) ? undefined : targetId,
             eventType: req.query.eventType || undefined,
         });
-        const authHeader = req.headers.authorization || '';
-        const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
-        const dmToken = req.headers['x-dm-token'] || bearerToken;
-        res.json(requireDm(dmToken) ? events : []);
+        res.json(events);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -784,7 +786,6 @@ function disconnectGrantSockets(grantId) {
 
 app.use('/api/access-grants', createAccessGrantRouter({
     service: accessGrantService,
-    requireDm,
     onGrantInvalidated: disconnectGrantSockets,
     transaction: operation => db.transaction(operation)(),
     onAudit(event, req) {

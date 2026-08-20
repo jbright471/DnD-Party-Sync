@@ -2,15 +2,6 @@
 
 const express = require('express');
 
-function bearerToken(req) {
-  const authorization = req.headers.authorization;
-  if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
-    return authorization.slice('Bearer '.length);
-  }
-  const headerToken = req.headers['x-dm-token'];
-  return typeof headerToken === 'string' ? headerToken : null;
-}
-
 function linkFor(grant, token) {
   const fragment = `#access_token=${encodeURIComponent(token)}`;
   if (grant.role === 'player') return `/companion/${grant.characterId}${fragment}`;
@@ -27,19 +18,11 @@ function serializeIssued(issued) {
 
 function createAccessGrantRouter({
   service,
-  requireDm,
   onGrantInvalidated = () => {},
   onAudit = () => {},
   transaction = operation => operation(),
 }) {
   const router = express.Router();
-
-  router.use((req, res, next) => {
-    if (!requireDm(bearerToken(req))) {
-      return res.status(401).json({ error: 'DM authentication required' });
-    }
-    next();
-  });
 
   router.get('/', (_req, res) => {
     res.json(service.listGrants());

@@ -173,7 +173,6 @@ export default function DmDashboard() {
       const response = await fetch('/api/access-grants/cast', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${state.dmToken}`,
           'Content-Type': 'application/json',
         },
         body: '{}',

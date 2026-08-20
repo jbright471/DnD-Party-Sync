@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { RefreshCw, Map, Users, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import socket from '../socket';
+import { useAuthenticatedResourceUrl } from '../hooks/useAuthenticatedResourceUrl';
 
 // Token data structure from map_state broadcast
 interface MapToken {
@@ -62,6 +63,7 @@ export default function BattleMap() {
   // Dragging state
   const dragging = useRef<{ tokenId: number; startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [localPositions, setLocalPositions] = useState<Record<number, { x: number; y: number }>>({});
+  const mapImageUrl = useAuthenticatedResourceUrl(mapState?.image_data);
 
   useEffect(() => {
     const handler = (data: MapState | null) => setMapState(data);
@@ -174,9 +176,9 @@ export default function BattleMap() {
         onPointerUp={isDm ? handlePointerUp : undefined}
         onPointerLeave={isDm ? handlePointerUp : undefined}
       >
-        {mapState.image_data && (
+        {mapImageUrl && (
           <img
-            src={mapState.image_data}
+            src={mapImageUrl}
             alt={mapState.name}
             className="w-full h-full object-contain"
             draggable={false}

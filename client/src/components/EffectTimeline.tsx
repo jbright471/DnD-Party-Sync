@@ -248,10 +248,7 @@ function AoEGroupRow({ groupId, events, isDm, isExpanded, onToggle }: {
 export function EffectTimeline() {
   const { state } = useGame();
   const isDm = state.isDm;
-  const fetchTimeline = useCallback(
-    (url: string) => fetch(url, state.dmToken ? { headers: { 'X-DM-Token': state.dmToken } } : undefined),
-    [state.dmToken],
-  );
+  const fetchTimeline = useCallback((url: string) => fetch(url), []);
 
   const [events, setEvents] = useState<EffectEvent[]>([]);
   const [sessions, setSessions] = useState<CombatSession[]>([]);

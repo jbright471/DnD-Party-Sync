@@ -229,7 +229,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // Join DM room if token exists
     const storedToken = localStorage.getItem('dm_token');
     if (storedToken) {
-      fetch('/api/effect-timeline', { headers: { 'X-DM-Token': storedToken } })
+      fetch('/api/effect-timeline')
         .then(r => r.json())
         .then(setEffectEvents)
         .catch(() => {});

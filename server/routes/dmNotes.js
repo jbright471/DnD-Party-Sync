@@ -2,19 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// DM auth middleware — accepts only the revocable DM session token.
-function dmOnly(req, res, next) {
-    const token = req.headers['x-dm-token'];
-    if (token) {
-        const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
-        if (row && row.value && row.value === token) return next();
-    }
-
-    res.status(403).json({ error: 'DM access required' });
-}
-
 // GET /api/dm-notes — list all notes with optional filters
-router.get('/', dmOnly, (req, res) => {
+router.get('/', (req, res) => {
     const { linked_type, linked_id, tag } = req.query;
     let where = [];
     let params = [];
@@ -37,7 +26,7 @@ router.get('/', dmOnly, (req, res) => {
 });
 
 // POST /api/dm-notes — create a note
-router.post('/', dmOnly, (req, res) => {
+router.post('/', (req, res) => {
     const { title = 'Untitled', content = '', linked_type = 'general', linked_id = null, tags = [] } = req.body;
     const result = db.prepare(`
         INSERT INTO dm_prep_notes (title, content, linked_type, linked_id, tags_json)
@@ -49,7 +38,7 @@ router.post('/', dmOnly, (req, res) => {
 });
 
 // PATCH /api/dm-notes/:id — update a note
-router.patch('/:id', dmOnly, (req, res) => {
+router.patch('/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const existing = db.prepare('SELECT * FROM dm_prep_notes WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'Note not found' });
@@ -73,7 +62,7 @@ router.patch('/:id', dmOnly, (req, res) => {
 });
 
 // DELETE /api/dm-notes/:id
-router.delete('/:id', dmOnly, (req, res) => {
+router.delete('/:id', (req, res) => {
     const id = parseInt(req.params.id);
     db.prepare('DELETE FROM dm_prep_notes WHERE id = ?').run(id);
     res.json({ success: true });

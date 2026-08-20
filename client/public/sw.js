@@ -1,12 +1,7 @@
 // Arcane Ally — Service Worker
 // Strategy: network-first for API, cache-first for static assets
 
-const CACHE_NAME = 'dnd-offline-v1';
-const API_CACHE_PATTERNS = [
-  /\/api\/characters\/\d+/,
-  /\/api\/offline-bundle/,
-  /\/api\/effect-timeline/,
-];
+const CACHE_NAME = 'dnd-offline-v2';
 
 // On install — skip waiting to activate immediately
 self.addEventListener('install', () => {
@@ -29,28 +24,8 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET and same-origin check
   if (request.method !== 'GET') return;
 
-  // Never cache DM-only endpoints
-  if (url.pathname.startsWith('/api/dm-notes')) return;
-  // Never cache write/mutation endpoints
-  if (url.pathname.startsWith('/api/auth')) return;
-
-  const isApiCacheable = API_CACHE_PATTERNS.some(p => p.test(url.pathname));
-
-  if (isApiCacheable) {
-    // Network-first: try network, fall back to cache
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => caches.match(request))
-    );
-    return;
-  }
+  // R1-E: authenticated API responses must never enter the shared offline cache.
+  if (url.pathname.startsWith('/api/')) return;
 
   // Static assets — cache-first (Vite handles hashed filenames)
   if (url.pathname.startsWith('/assets/') || url.pathname === '/') {

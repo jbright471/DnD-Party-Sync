@@ -185,7 +185,6 @@ export default function CharacterSheet() {
       const response = await fetch('/api/access-grants/player', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${state.dmToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ characterId: Number(character.id) }),

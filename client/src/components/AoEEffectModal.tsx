@@ -5,7 +5,6 @@ import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Input } from './ui/input';
 import { Plus, Trash2, Zap, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
-import { useGame } from '../context/GameContext';
 import { generateRequestId } from '../lib/requestId';
 import { DND_CONDITIONS } from '../types/character';
 
@@ -55,8 +54,6 @@ function newEffect(): EffectEntry {
 }
 
 export function AoEEffectModal({ open, onClose, targets }: Props) {
-  const { state } = useGame();
-  const { dmToken } = state;
   const [effects, setEffects] = useState<EffectEntry[]>([newEffect()]);
   const [results, setResults] = useState<AoERecord[] | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -98,7 +95,6 @@ export function AoEEffectModal({ open, onClose, targets }: Props) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${dmToken || ''}`,
       },
       body: JSON.stringify({
         requestId: generateRequestId(),

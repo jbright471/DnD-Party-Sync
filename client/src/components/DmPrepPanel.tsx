@@ -5,7 +5,6 @@ import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { BookOpen, Plus, Search, Tag, Trash2, ChevronLeft, Save, X } from 'lucide-react';
-import { useGame } from '../context/GameContext';
 import socket from '../socket';
 
 interface DmPrepNote {
@@ -49,9 +48,6 @@ function renderMarkdownLite(text: string): string {
 }
 
 export function DmPrepPanel({ isOpen, onClose, contextFilter }: DmPrepPanelProps) {
-  const { state } = useGame();
-  const { dmToken } = state;
-
   const [notes, setNotes] = useState<DmPrepNote[]>([]);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -64,8 +60,7 @@ export function DmPrepPanel({ isOpen, onClose, contextFilter }: DmPrepPanelProps
 
   const dmHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
-    ...(dmToken ? { 'x-dm-token': dmToken } : {}),
-  }), [dmToken]);
+  }), []);
 
   const loadNotes = useCallback(async () => {
     if (!isOpen) return;

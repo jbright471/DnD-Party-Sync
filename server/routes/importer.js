@@ -576,12 +576,7 @@ function insertCharacter(charObj) {
 }
 
 function isDmRequest(req) {
-    const token = req.headers['x-dm-token'];
-    if (token) {
-        const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
-        if (row && row.value && row.value === token) return true;
-    }
-    return false;
+    return req.restAuthorization?.role === 'dm';
 }
 
 module.exports = router;

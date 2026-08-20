@@ -128,13 +128,10 @@ export function EffectPresetLibrary({ open, onClose }: EffectPresetLibraryProps)
     }
 
     try {
-      // Find DM Token for headers
-      const dmToken = localStorage.getItem('dm_token') || '';
       const res = await fetch('/api/effect-presets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-DM-Token': dmToken,
         },
         body: JSON.stringify({
           name: newPreset.name,
@@ -171,12 +168,8 @@ export function EffectPresetLibrary({ open, onClose }: EffectPresetLibraryProps)
   const handleDelete = async (id: number, name: string) => {
     if (!confirm(`Delete preset "${name}"?`)) return;
     try {
-      const dmToken = localStorage.getItem('dm_token') || '';
       const res = await fetch(`/api/effect-presets/${id}`, {
         method: 'DELETE',
-        headers: {
-          'X-DM-Token': dmToken,
-        },
       });
 
       if (!res.ok) {

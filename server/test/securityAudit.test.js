@@ -41,6 +41,19 @@ describe('persistent security audit records', () => {
     db.close();
   });
 
+  it('rejects attacker-controlled REST route classes', () => {
+    const db = createTestDb();
+    const writeAudit = createSecurityAuditWriter(db);
+    expect(() => writeAudit({
+      eventType: 'rest_authorization_denied',
+      actorRole: 'unauthenticated',
+      routeClass: 'raw/path?token=secret',
+      outcome: 'denied',
+      reasonCode: 'route_unclassified',
+    })).toThrow(/route class/i);
+    db.close();
+  });
+
   it('bounds persistent audit retention', () => {
     const db = createTestDb();
     const writeAudit = createSecurityAuditWriter(db, { maxRows: 2 });

@@ -236,9 +236,11 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 - Production refuses to start with a missing, common, sample, or shorter-than-12-character `DM_PIN`. Keep the value in runtime secret injection, not a checked-in file. After rotating it, restart the backend and log in once to replace the stored DM session token; revoke or rotate player/cast grants separately if they may have been exposed.
 - Set `ALLOWED_ORIGINS` to exact origins such as `https://ally.example.test`; never use `*`. Requests without an `Origin` remain available for native/non-browser clients.
 - Default limits are `256kb` JSON bodies, `65536`-byte Socket.io messages, five DM login attempts per 15 minutes, 30 Socket.io connection attempts per minute per direct peer, and 120 inbound events per 10 seconds per connection. Override the corresponding variables in `.env.example` only after measuring normal use.
-- DM PINs are accepted only by `/api/auth/dm`; administrative routes use the resulting revocable `X-DM-Token`/Bearer session rather than accepting the raw PIN.
-- Security events for DM authentication, grant lifecycle, realtime authorization denials, origin denials, and throttling are stored in `security_audit_events`. Records use allowlisted metadata, never store PINs, bearer tokens, authorization headers, or packet bodies, and retain the newest 10,000 rows by default (`SECURITY_AUDIT_MAX_ROWS`).
-- Do not publish the backend port directly to the internet. R1-D hardens authentication and realtime transport, but the remaining REST route groups still require a separate deny-by-default authorization review before broader-network exposure.
+- DM PINs are accepted only by `POST /api/auth/dm`. `GET /api/health` is the only other public API operation. Every other classified REST surface requires the current revocable DM session through `Authorization: Bearer` or `X-DM-Token`; query credentials, PIN headers, caller roles, `isDm`, ownership claims, and player/cast access grants do not authorize REST.
+- The client adds the stored DM session only to protected same-origin `/api/` fetches. Third-party requests are unchanged, map files and exports use authenticated fetch/blob flows, and the service worker never caches API responses.
+- Security events for DM authentication, grant lifecycle, REST/realtime authorization denials, origin denials, and throttling are stored in `security_audit_events`. REST denial rows contain only an allowlisted server-derived actor role, safe route-class identifier, outcome, source address, and reason code; raw paths, queries, bodies, PINs, tokens, headers, cookies, and access-grant credentials are excluded. The newest 10,000 rows are retained by default (`SECURITY_AUDIT_MAX_ROWS`).
+- Unclassified `/api` prefixes fail closed. Keep the source-to-policy coverage test and [REST access matrix](docs/REST_ACCESS_MATRIX.md) synchronized whenever adding a route mount or inline API prefix.
+- Do not publish the backend port directly to the internet. R1-E closes the repository REST boundary, but target-host revision checks, database backup/migration, reverse-proxy/HTTPS configuration, private-network/firewall posture, and deployed browser/process verification remain release gates.
 - Prefer local Ollama for AI features when campaign privacy matters.
 
 ## Project Structure
@@ -255,33 +257,35 @@ Arcane Ally is intended for self-hosted, local-first play. Before publishing or 
 
 ## API Surface
 
-| Route Group | Purpose |
-|---|---|
-| `/api/auth/dm` | DM PIN login and session token creation |
-| `/api/characters` | Character CRUD, HP patches, token images, weapon attacks, action log |
-| `/api/characters/import` | D&D Beyond import, PDF import, and character re-sync |
-| `/api/encounters` / `/api/initiative` | Encounter library, tracker state, initiative export/duplicate helpers |
-| `/api/homebrew` | Compendium CRUD, AI generation, item parsing, item assignment |
-| `/api/v1/effects/bulk-apply` | Bulk AoE / multi-target damage, healing, and condition application |
-| `/api/effect-timeline` | Active or archived combat ledger with session, cursor, target, and event-type filters |
-| `/api/combat-sessions` | Active and archived encounter metadata with event counts |
-| `/api/effect-presets` | Reusable effect and condition preset CRUD |
-| `/api/combat/snapshots` | Combat snapshot creation, diffing, restore, and restore audit logs |
-| `/api/maps` | Battlemap/overworld map CRUD, map files, tokens, and markers |
-| `/api/quests` | Quest lifecycle |
-| `/api/npcs` | NPC CRUD |
-| `/api/notes` | Shared party notes |
-| `/api/dm-notes` | DM-only prep notes |
-| `/api/automation` | Automation presets; `/api/automation/rules` reads or updates campaign-wide policies |
-| `/api/prep-packs` | Portable encounter pack import |
-| `/api/world` | World time and weather state |
-| `/api/loot` | Loot generation, archive, and direct item assignment |
-| `/api/lore` | AI lore generation with actionable entity blocks |
-| `/api/chat` | Rules assistant |
-| `/api/recaps` | Session recap archive and combat recap save |
-| `/api/sync-audit` | DM sync status, connected players, and pending saves/imports |
-| `/api/offline-bundle` | Offline character/effects payload for companion clients |
-| `/api/health` | Telemetry endpoint with uptime and V8/RSS memory metrics |
+| Route Group | Purpose | R1-E access |
+|---|---|---|
+| `POST /api/auth/dm` | DM PIN login and session token creation | Public |
+| `/api/characters` | Character CRUD, HP patches, token images, weapon attacks, action log | DM session |
+| `/api/characters/import` | D&D Beyond import, PDF import, and character re-sync | DM session |
+| `/api/encounters` / `/api/initiative` | Encounter library, tracker state, initiative export/duplicate helpers | DM session |
+| `/api/homebrew` | Compendium CRUD, AI generation, item parsing, item assignment | DM session |
+| `/api/v1/effects/bulk-apply` | Bulk AoE / multi-target damage, healing, and condition application | DM session |
+| `/api/effect-timeline` | Active or archived combat ledger with session, cursor, target, and event-type filters | DM session |
+| `/api/combat-sessions` | Active and archived encounter metadata with event counts | DM session |
+| `/api/effect-presets` | Reusable effect and condition preset CRUD | DM session |
+| `/api/combat/snapshots` | Combat snapshot creation, diffing, restore, and restore audit logs | DM session |
+| `/api/maps` | Battlemap/overworld map CRUD, authenticated map files, tokens, and markers | DM session |
+| `/api/quests` | Quest lifecycle | DM session |
+| `/api/npcs` | NPC CRUD | DM session |
+| `/api/notes` | Shared party notes | DM session |
+| `/api/dm-notes` | DM-only prep notes | DM session |
+| `/api/automation` | Automation presets; `/api/automation/rules` reads or updates campaign-wide policies | DM session |
+| `/api/prep-packs` | Portable encounter pack import | DM session |
+| `/api/world` | World time and weather state | DM session |
+| `/api/loot` | Loot generation, archive, and direct item assignment | DM session |
+| `/api/lore` | AI lore generation with actionable entity blocks | DM session |
+| `/api/chat` | Rules assistant | DM session |
+| `/api/recaps` | Session recap archive and combat recap save | DM session |
+| `/api/sync-audit` | DM sync status, connected players, and pending saves/imports | DM session |
+| `/api/offline-bundle` | DM-authorized offline character/effects diagnostic payload | DM session |
+| `GET /api/health` | Telemetry endpoint with uptime and V8/RSS memory metrics | Public |
+
+See [docs/REST_ACCESS_MATRIX.md](docs/REST_ACCESS_MATRIX.md) for the complete inventory, route-class identifiers, denial behavior, and change invariant.
 
 **70+ Socket.io real-time events** covering character state, combat, dice, loot, voting, world, voice, effects, automation, permissions, battlemap tokens, server-side hidden rolls, and pending save resolution.
 

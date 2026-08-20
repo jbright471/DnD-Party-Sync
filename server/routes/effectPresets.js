@@ -2,16 +2,6 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// DM auth middleware — accepts only the revocable DM session token.
-function dmOnly(req, res, next) {
-    const token = req.headers['x-dm-token'];
-    if (token) {
-        const row = db.prepare("SELECT value FROM campaign_state WHERE key = 'dm_token'").get();
-        if (row && row.value && row.value === token) return next();
-    }
-    res.status(403).json({ error: 'DM access required' });
-}
-
 function serialize(v) {
     return typeof v === 'string' ? v : JSON.stringify(v);
 }
@@ -30,7 +20,7 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/effect-presets — create a custom preset (DM only)
-router.post('/', dmOnly, (req, res) => {
+router.post('/', (req, res) => {
     const { name, category, effects_json, description } = req.body;
 
     if (!name) return res.status(400).json({ error: 'name required' });
@@ -57,7 +47,7 @@ router.post('/', dmOnly, (req, res) => {
 });
 
 // PATCH /api/effect-presets/:id — update a preset (DM only)
-router.patch('/:id', dmOnly, (req, res) => {
+router.patch('/:id', (req, res) => {
     const id = parseInt(req.params.id, 10);
     const existing = db.prepare('SELECT * FROM effect_presets WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({ error: 'Preset not found' });
@@ -89,7 +79,7 @@ router.patch('/:id', dmOnly, (req, res) => {
 });
 
 // DELETE /api/effect-presets/:id — delete a preset (DM only)
-router.delete('/:id', dmOnly, (req, res) => {
+router.delete('/:id', (req, res) => {
     const id = parseInt(req.params.id, 10);
     try {
         const existing = db.prepare('SELECT * FROM effect_presets WHERE id = ?').get(id);

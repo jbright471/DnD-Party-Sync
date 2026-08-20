@@ -131,6 +131,10 @@ describe('actual production server security integration', () => {
     db.prepare('UPDATE characters SET inventory = ? WHERE id = ?')
       .run(JSON.stringify([{ name: 'BROM_PRIVATE_SENTINEL' }]), bromId);
     db.prepare("INSERT INTO party_notes (title, content) VALUES ('Secret', 'DM_NOTE_SENTINEL')").run();
+    db.prepare(`
+      INSERT INTO quests (title, description, dm_secrets, is_public, rewards)
+      VALUES ('Hidden integration quest', 'HIDDEN_DESCRIPTION_SENTINEL', 'HIDDEN_SECRET_SENTINEL', 0, '')
+    `).run();
     db.close();
 
     const authResponse = await request(baseUrl, '/api/auth/dm', {
@@ -180,6 +184,136 @@ describe('actual production server security integration', () => {
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/DM_PIN/);
     expect(fs.existsSync(insecureDatabase)).toBe(false);
+  });
+
+  it('rejects unauthenticated REST reads, writes, exports, files, AI, and hidden-state switches without side effects', async () => {
+    const cases = [
+      ['character read', '/api/characters'],
+      ['case-variant character read', '/API/characters'],
+      ['encounter export', '/api/encounters/999/export'],
+      ['map file', '/api/maps/file/UNAUTHENTICATED_FILE_SENTINEL.png'],
+      ['hidden quest query', '/api/quests?isDm=true'],
+      ['offline character bundle', `/api/offline-bundle?characterId=${ariaId}`],
+    ];
+
+    for (const [_label, pathname] of cases) {
+      const response = await request(baseUrl, pathname);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ code: 'REST_DM_REQUIRED' });
+    }
+
+    for (const pathname of ['/api/chat', '/api/lore']) {
+      const response = await request(baseUrl, pathname, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ code: 'REST_DM_REQUIRED' });
+    }
+
+    const verificationDb = new Database(databasePath, { readonly: true });
+    const before = verificationDb
+      .prepare("SELECT COUNT(*) AS count FROM quests WHERE title = 'UNAUTHENTICATED_WRITE_SENTINEL'")
+      .get().count;
+    const deniedWrite = await request(baseUrl, '/api/quests?dmToken=QUERY_TOKEN_SENTINEL&role=dm&isDm=true', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dm-pin': DM_PIN, 'x-role': 'dm' },
+      body: JSON.stringify({
+        title: 'UNAUTHENTICATED_WRITE_SENTINEL',
+        isDm: true,
+        role: 'dm',
+      }),
+    });
+    expect(deniedWrite.status).toBe(401);
+    const after = verificationDb
+      .prepare("SELECT COUNT(*) AS count FROM quests WHERE title = 'UNAUTHENTICATED_WRITE_SENTINEL'")
+      .get().count;
+    const hiddenQuest = verificationDb
+      .prepare("SELECT dm_secrets FROM quests WHERE title = 'Hidden integration quest'")
+      .get();
+    verificationDb.close();
+    expect(after).toBe(before);
+    expect(hiddenQuest.dm_secrets).toBe('HIDDEN_SECRET_SENTINEL');
+  });
+
+  it('forbids player and cast grants from REST and denies unclassified API paths', async () => {
+    for (const grant of [ariaGrant, castGrant]) {
+      const response = await request(baseUrl, '/api/characters', {
+        headers: { authorization: `Bearer ${grant.token}` },
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: 'REST_DM_REQUIRED' });
+    }
+
+    const deniedPlayerWrite = await request(baseUrl, '/api/quests', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ariaGrant.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ title: 'PLAYER_REST_WRITE_SENTINEL' }),
+    });
+    expect(deniedPlayerWrite.status).toBe(403);
+
+    for (const headers of [{}, { authorization: `Bearer ${dmToken}` }]) {
+      const response = await request(
+        baseUrl,
+        '/api/future-private/TOKEN_PATH_SENTINEL?token=QUERY_SECRET_SENTINEL',
+        { headers },
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: 'REST_ROUTE_UNCLASSIFIED' });
+    }
+
+    const db = new Database(databasePath, { readonly: true });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM quests WHERE title = 'PLAYER_REST_WRITE_SENTINEL'").get().count).toBe(0);
+    const rows = db.prepare(`
+      SELECT event_type, actor_role, route_class, outcome, source_address, reason_code
+      FROM security_audit_events
+      WHERE event_type = 'rest_authorization_denied'
+      ORDER BY id
+    `).all();
+    db.close();
+    expect(rows.some(row => row.actor_role === 'player' && row.reason_code === 'access_grant_forbidden')).toBe(true);
+    expect(rows.some(row => row.actor_role === 'cast' && row.reason_code === 'access_grant_forbidden')).toBe(true);
+    expect(rows.some(row => row.route_class === 'unclassified_api')).toBe(true);
+    expect(JSON.stringify(rows)).not.toMatch(/TOKEN_PATH_SENTINEL|QUERY_SECRET_SENTINEL|QUERY_TOKEN_SENTINEL|correct-horse-42/);
+  });
+
+  it('keeps only bootstrap endpoints public and honors valid, invalid, and revoked DM sessions', async () => {
+    const health = await request(baseUrl, '/api/health');
+    expect(health.status).toBe(200);
+
+    const bearerAccess = await request(baseUrl, '/api/characters', {
+      headers: { authorization: `Bearer ${dmToken}` },
+    });
+    const compatibilityAccess = await request(baseUrl, '/api/characters', {
+      headers: { 'x-dm-token': dmToken },
+    });
+    const invalidAccess = await request(baseUrl, '/api/characters', {
+      headers: { authorization: 'Bearer INVALID_DM_TOKEN_SENTINEL' },
+    });
+    expect(bearerAccess.status).toBe(200);
+    expect(compatibilityAccess.status).toBe(200);
+    expect(invalidAccess.status).toBe(401);
+
+    const priorToken = dmToken;
+    const replacement = await request(baseUrl, '/api/auth/dm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pin: DM_PIN }),
+    }).then(response => response.json());
+    dmToken = replacement.token;
+
+    const revokedAccess = await request(baseUrl, '/api/characters', {
+      headers: { authorization: `Bearer ${priorToken}` },
+    });
+    const replacementAccess = await request(baseUrl, '/api/characters', {
+      headers: { authorization: `Bearer ${dmToken}` },
+    });
+    expect(revokedAccess.status).toBe(401);
+    expect(replacementAccess.status).toBe(200);
   });
 
   it('enforces HTTP origin, body-size, DM-auth rate, and redacted audit controls', async () => {

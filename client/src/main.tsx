@@ -1,6 +1,9 @@
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
+import { installApiCredentialBoundary } from './lib/apiCredentialBoundary.ts'
+
+installApiCredentialBoundary();
 
 // Add fonts to document head
 const link1 = document.createElement('link');

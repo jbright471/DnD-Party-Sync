@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { ScrollArea } from './ui/scroll-area';
 import { Swords, Plus, Trash2, ArrowLeft, Play, Copy, ClipboardPaste } from 'lucide-react';
 import { toast } from 'sonner';
+import { downloadAuthenticatedApiFile } from '../lib/apiCredentialBoundary';
 
 interface Monster {
   name: string;
@@ -93,8 +94,12 @@ export function EncounterBuilderModal({ open, onClose, onStartEncounter }: Encou
     }
   };
 
-  const handleExport = (enc: Encounter) => {
-    window.open(`/api/encounters/${enc.id}/export`, '_blank');
+  const handleExport = async (enc: Encounter) => {
+    try {
+      await downloadAuthenticatedApiFile(`/api/encounters/${enc.id}/export`, `encounter_${enc.id}.json`);
+    } catch {
+      toast.error('Failed to export encounter');
+    }
   };
 
   const handleDelete = async (id: number) => {

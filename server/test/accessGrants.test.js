@@ -10,14 +10,18 @@ import {
   migrateAccessGrants,
 } from '../lib/accessGrants.js';
 import { createAccessGrantRouter } from '../routes/accessGrants.js';
+import { createRestAuthorizationMiddleware } from '../lib/restAuthorization.js';
 
 function startHttpServer(db, service, auditEvents = [], onAudit = event => auditEvents.push(event)) {
   const app = express();
+  app.use(createRestAuthorizationMiddleware({
+    authenticateDm: token => token === 'valid-dm-token',
+    authenticateAccessGrant: token => service.authenticate(token),
+  }));
   app.use(express.json());
   app.use('/api/access-grants', createAccessGrantRouter({
     db,
     service,
-    requireDm: token => token === 'valid-dm-token',
     onAudit,
     transaction: operation => db.transaction(operation)(),
   }));

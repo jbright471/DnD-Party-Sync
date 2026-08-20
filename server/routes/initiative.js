@@ -132,7 +132,7 @@ router.post('/:id/duplicate', (req, res) => {
 router.get('/tracker', (req, res) => {
     try {
         res.json(projectInitiativeState(getTrackerState(), {
-            role: 'public',
+            role: 'dm',
             permissions: getPermissions(db),
         }));
     } catch (err) {

@@ -19,6 +19,7 @@ import {
 import { ScrollArea } from '../components/ui/scroll-area';
 import { toast } from 'sonner';
 import socket from '../socket';
+import { useAuthenticatedResourceUrl } from '../hooks/useAuthenticatedResourceUrl';
 
 interface WorldMarker {
   id: number;
@@ -54,6 +55,7 @@ export default function WorldMapPage() {
   const [loading, setLoading] = useState(true);
   const [isDm, setIsDm] = useState(false);
   const [allMaps, setAllMaps] = useState<{ id: number; name: string }[]>([]);
+  const mapImageUrl = useAuthenticatedResourceUrl(worldMap?.map_url);
 
   // Upload state
   const [uploadName, setUploadName] = useState('');
@@ -263,7 +265,7 @@ export default function WorldMapPage() {
               onClick={handleMapClick}
             >
               <img
-                src={worldMap.map_url}
+                src={mapImageUrl || undefined}
                 alt={worldMap.name}
                 className="w-full h-full object-contain select-none"
                 draggable={false}

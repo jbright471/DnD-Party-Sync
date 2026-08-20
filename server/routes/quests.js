@@ -2,16 +2,10 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET /api/quests — List all quests
-// If isDm query param is present, return everything. Otherwise only public.
-router.get('/', (req, res) => {
-    const isDm = req.query.isDm === 'true';
+// GET /api/quests — REST is DM-only at the central authorization boundary.
+router.get('/', (_req, res) => {
     try {
-        let query = 'SELECT * FROM quests';
-        if (!isDm) query += ' WHERE is_public = 1';
-        query += ' ORDER BY created_at DESC';
-        
-        const quests = db.prepare(query).all();
+        const quests = db.prepare('SELECT * FROM quests ORDER BY created_at DESC').all();
         res.json(quests);
     } catch (err) {
         res.status(500).json({ error: err.message });
